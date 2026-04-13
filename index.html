@@ -91,22 +91,22 @@
           </label>
           <label>
             Role
-            <select name="role" required>
+            <select id="signupRoleSelect" name="role" required>
               <option value="member">Member</option>
               <option value="officer">Officer</option>
             </select>
           </label>
-          <label>
+          <label id="signupOfficerInviteField">
             Officer invite code
-            <input type="text" name="officerInviteCode" placeholder="Required only for officer sign-up">
+            <input id="signupOfficerInviteInput" type="text" name="officerInviteCode" placeholder="Required only for officer sign-up">
           </label>
-          <label>
+          <label id="signupOfficerPositionField">
             Officer position
-            <input type="text" name="position" placeholder="President, Treasurer, Events Director">
+            <input id="signupOfficerPositionInput" type="text" name="position" placeholder="President, Treasurer, Events Director">
           </label>
-          <label>
+          <label id="signupOfficerBioField">
             About you
-            <textarea name="bio" rows="3" placeholder="Optional short intro for the Officers section"></textarea>
+            <textarea id="signupOfficerBioInput" name="bio" rows="3" placeholder="Optional short intro for the Officers section"></textarea>
           </label>
           <button class="button button-primary" type="submit">Create Profile</button>
           <p class="form-note" id="signupNote" aria-live="polite"></p>
@@ -425,6 +425,13 @@
                 <div id="adminAttendanceCode" class="attendance-code"></div>
                 <div id="adminAttendanceEvent"></div>
               </div>
+            </section>
+
+            <section class="card">
+              <h3>Backend Data</h3>
+              <p class="muted-text">Officer-only snapshot of the shared database.</p>
+              <div id="adminDataStats" class="profile-summary"></div>
+              <div id="adminDataUsers" class="admin-event-list"></div>
             </section>
           </div>
         </section>

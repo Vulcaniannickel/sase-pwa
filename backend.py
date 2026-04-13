@@ -1,356 +1,300 @@
 from __future__ import annotations
 
-import os
-import sqlite3
-import secrets
 import json
-from contextlib import closing
+import os
+import secrets
 from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
-from typing import Any
 
-from flask import Flask, g, jsonify, request, send_from_directory, session
+from flask import Flask, g, jsonify, request, send_from_directory, session as flask_session
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, event, func, select
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, scoped_session, sessionmaker
 from werkzeug.security import check_password_hash, generate_password_hash
 
 try:
     from pywebpush import WebPushException, webpush
-except ImportError:  # pragma: no cover - optional until dependency is installed
+except ImportError:
     WebPushException = Exception
     webpush = None
 
-
 BASE_DIR = Path(__file__).resolve().parent
-DATABASE_PATH = Path(os.environ.get("DATABASE_PATH", str(BASE_DIR / "sase_portal.db")))
+raw_db_url = os.environ.get("DATABASE_URL", "").strip()
+if raw_db_url.startswith("postgres://"):
+    raw_db_url = raw_db_url.replace("postgres://", "postgresql+psycopg://", 1)
+elif raw_db_url.startswith("postgresql://") and "+psycopg" not in raw_db_url:
+    raw_db_url = raw_db_url.replace("postgresql://", "postgresql+psycopg://", 1)
+DATABASE_URL = raw_db_url or f"sqlite:///{(BASE_DIR / 'sase_portal.db').as_posix()}"
 OFFICER_INVITE_CODE = os.environ.get("OFFICER_INVITE_CODE", "SASE-OFFICER")
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
 VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
 VAPID_CLAIMS_SUBJECT = os.environ.get("VAPID_CLAIMS_SUBJECT", "mailto:ryankreger364@gmail.com")
-
-YEAR_OPTIONS = {
-    "First Year",
-    "Second Year",
-    "Third Year",
-    "Fourth Year",
-    "Graduate",
-}
-
+YEAR_OPTIONS = {"First Year", "Second Year", "Third Year", "Fourth Year", "Graduate"}
 EVENT_TYPES = {"Social", "GBM", "Professional", "Workshop"}
 EVENT_STATUSES = {"upcoming", "completed"}
-
 
 app = Flask(__name__, static_folder=".")
 app.config["SECRET_KEY"] = SECRET_KEY
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 
-def get_db() -> sqlite3.Connection:
-    if "db" not in g:
-        connection = sqlite3.connect(DATABASE_PATH)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        g.db = connection
+class Base(DeclarativeBase):
+    pass
+
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    major: Mapped[str] = mapped_column(String(255), nullable=False)
+    year: Mapped[str] = mapped_column(String(50), nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    position: Mapped[str | None] = mapped_column(String(255))
+    stars: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    eligible_for_leaderboard: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    bio: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_events: Mapped[list["Event"]] = relationship(back_populates="creator")
+    interests: Mapped[list["EventInterest"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    rsvps: Mapped[list["EventRsvp"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    attendance_records: Mapped[list["EventAttendance"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    push_subscriptions: Mapped[list["PushSubscription"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+
+
+class Event(Base):
+    __tablename__ = "events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    type: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    date: Mapped[str] = mapped_column(String(80), nullable=False)
+    time: Mapped[str] = mapped_column(String(80), nullable=False)
+    location: Mapped[str] = mapped_column(String(255), nullable=False)
+    stars: Mapped[int] = mapped_column(Integer, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    checkin_token: Mapped[str | None] = mapped_column(String(255))
+    checkin_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    attendance_code: Mapped[str | None] = mapped_column(String(20))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    creator: Mapped[User | None] = relationship(back_populates="created_events")
+    interests: Mapped[list["EventInterest"]] = relationship(back_populates="event", cascade="all, delete-orphan")
+    rsvps: Mapped[list["EventRsvp"]] = relationship(back_populates="event", cascade="all, delete-orphan")
+    attendance_records: Mapped[list["EventAttendance"]] = relationship(back_populates="event", cascade="all, delete-orphan")
+
+
+class EventInterest(Base):
+    __tablename__ = "event_interest"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    user: Mapped[User] = relationship(back_populates="interests")
+    event: Mapped[Event] = relationship(back_populates="interests")
+
+
+class EventRsvp(Base):
+    __tablename__ = "event_rsvp"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    user: Mapped[User] = relationship(back_populates="rsvps")
+    event: Mapped[Event] = relationship(back_populates="rsvps")
+
+
+class EventAttendance(Base):
+    __tablename__ = "event_attendance"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    user: Mapped[User] = relationship(back_populates="attendance_records")
+    event: Mapped[Event] = relationship(back_populates="attendance_records")
+
+
+class PushSubscription(Base):
+    __tablename__ = "push_subscriptions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    endpoint: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    p256dh: Mapped[str] = mapped_column(Text, nullable=False)
+    auth: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    user: Mapped[User] = relationship(back_populates="push_subscriptions")
+
+
+engine = create_engine(DATABASE_URL, future=True)
+SessionLocal = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False))
+
+
+@event.listens_for(Engine, "connect")
+def enable_sqlite_foreign_keys(dbapi_connection, connection_record):
+    if "sqlite3" in dbapi_connection.__class__.__module__:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+
+@app.before_request
+def open_db_session():
+    g.db = SessionLocal()
+
+
+@app.teardown_request
+def close_db_session(exc):
+    db = g.pop("db", None)
+    if db is None:
+        return
+    if exc is not None:
+        db.rollback()
+    db.close()
+    SessionLocal.remove()
+
+
+def get_db():
     return g.db
 
 
-@app.teardown_appcontext
-def close_db(_: object | None) -> None:
-    db = g.pop("db", None)
-    if db is not None:
-        db.close()
+def utc_now():
+    return datetime.now(timezone.utc)
+
+def init_db():
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        if (db.scalar(select(func.count()).select_from(Event)) or 0) == 0:
+            db.add_all([
+                Event(title="April GBM", type="GBM", status="completed", date="Thu, Apr 10", time="6:30 PM", location="STEM Center 202", stars=50, description="General body meeting with chapter updates, member shoutouts, and committee planning.", created_at=utc_now()),
+                Event(title="SASE Social Night", type="Social", status="upcoming", date="Tue, Apr 15", time="7:00 PM", location="Student Union Lounge", stars=30, description="Relax, meet new members, and build community with games and small group conversations.", created_at=utc_now()),
+                Event(title="Industry Networking Mixer", type="Professional", status="upcoming", date="Fri, Apr 18", time="5:30 PM", location="Innovation Atrium", stars=70, description="Connect with recruiters, alumni, and professionals across engineering and STEM industries.", created_at=utc_now()),
+                Event(title="Technical Case Study Workshop", type="Workshop", status="upcoming", date="Wed, Apr 23", time="6:00 PM", location="Engineering Hall 114", stars=60, description="Practice collaborative problem solving and communication with a guided technical challenge.", created_at=utc_now()),
+            ])
+            db.commit()
 
 
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def init_db() -> None:
-    schema = """
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      email TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      major TEXT NOT NULL,
-      year TEXT NOT NULL,
-      role TEXT NOT NULL CHECK(role IN ('member', 'officer')),
-      position TEXT,
-      stars INTEGER NOT NULL DEFAULT 0,
-      eligible_for_leaderboard INTEGER NOT NULL DEFAULT 1,
-      bio TEXT,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS events (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      type TEXT NOT NULL,
-      status TEXT NOT NULL CHECK(status IN ('upcoming', 'completed')),
-      date TEXT NOT NULL,
-      time TEXT NOT NULL,
-      location TEXT NOT NULL,
-      stars INTEGER NOT NULL,
-      description TEXT NOT NULL,
-      checkin_token TEXT,
-      checkin_active INTEGER NOT NULL DEFAULT 0,
-      attendance_code TEXT,
-      created_by INTEGER,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS event_interest (
-      user_id INTEGER NOT NULL,
-      event_id INTEGER NOT NULL,
-      created_at TEXT NOT NULL,
-      PRIMARY KEY (user_id, event_id),
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS event_rsvp (
-      user_id INTEGER NOT NULL,
-      event_id INTEGER NOT NULL,
-      created_at TEXT NOT NULL,
-      PRIMARY KEY (user_id, event_id),
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS event_attendance (
-      user_id INTEGER NOT NULL,
-      event_id INTEGER NOT NULL,
-      created_at TEXT NOT NULL,
-      PRIMARY KEY (user_id, event_id),
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS push_subscriptions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      endpoint TEXT NOT NULL UNIQUE,
-      p256dh TEXT NOT NULL,
-      auth TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    );
-    """
-    db = get_db()
-    with closing(db.cursor()) as cursor:
-        cursor.executescript(schema)
-        ensure_user_columns(cursor)
-        ensure_event_columns(cursor)
-    db.commit()
-    seed_events_if_needed(db)
-
-
-def ensure_user_columns(cursor: sqlite3.Cursor) -> None:
-    columns = {
-        row["name"]
-        for row in cursor.execute("PRAGMA table_info(users)").fetchall()
-    }
-    if "position" not in columns:
-        cursor.execute("ALTER TABLE users ADD COLUMN position TEXT")
-
-
-def ensure_event_columns(cursor: sqlite3.Cursor) -> None:
-    columns = {
-        row["name"]
-        for row in cursor.execute("PRAGMA table_info(events)").fetchall()
-    }
-    if "checkin_token" not in columns:
-        cursor.execute("ALTER TABLE events ADD COLUMN checkin_token TEXT")
-    if "checkin_active" not in columns:
-        cursor.execute("ALTER TABLE events ADD COLUMN checkin_active INTEGER NOT NULL DEFAULT 0")
-    if "attendance_code" not in columns:
-        cursor.execute("ALTER TABLE events ADD COLUMN attendance_code TEXT")
-
-
-def get_live_checkin_event() -> sqlite3.Row | None:
-    return get_db().execute(
-        """
-        SELECT *
-        FROM events
-        WHERE checkin_active = 1
-        ORDER BY id DESC
-        LIMIT 1
-        """
-    ).fetchone()
-
-
-def build_live_checkin_event(row: sqlite3.Row | None, include_code: bool = False) -> dict[str, Any] | None:
-    if row is None:
-        return None
-    payload = {
-        "id": row["id"],
-        "title": row["title"],
-        "type": row["type"],
-        "date": row["date"],
-        "time": row["time"],
-        "location": row["location"],
-        "stars": row["stars"],
-        "status": row["status"],
-    }
-    if include_code:
-        payload["attendanceCode"] = row["attendance_code"] or ""
-    return payload
-
-
-def push_notifications_configured() -> bool:
+def push_notifications_configured():
     return webpush is not None and bool(VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY)
 
 
-def build_push_payload(title: str, body: str, event_row: sqlite3.Row | None = None) -> str:
-    payload = {
-        "title": title,
-        "body": body,
-        "url": "/",
-    }
-    if event_row is not None:
-        payload["url"] = "/?event=" + str(event_row["id"])
-        payload["tag"] = f"event-{event_row['id']}"
+def build_push_payload(title, body, event_obj=None):
+    payload = {"title": title, "body": body, "url": "/"}
+    if event_obj is not None:
+        payload["url"] = f"/?event={event_obj.id}"
+        payload["tag"] = f"event-{event_obj.id}"
     return json.dumps(payload)
 
 
-def send_push_to_rows(rows: list[sqlite3.Row], payload: str) -> tuple[int, int]:
-    if not push_notifications_configured():
+def send_push_to_rows(rows, payload):
+    if not push_notifications_configured() or webpush is None:
         return 0, 0
-
     db = get_db()
     delivered = 0
     failed = 0
     for row in rows:
-        subscription = {
-            "endpoint": row["endpoint"],
-            "keys": {
-                "p256dh": row["p256dh"],
-                "auth": row["auth"],
-            },
-        }
         try:
-            webpush(
-                subscription_info=subscription,
-                data=payload,
-                vapid_private_key=VAPID_PRIVATE_KEY,
-                vapid_claims={"sub": VAPID_CLAIMS_SUBJECT},
-            )
+            webpush(subscription_info={"endpoint": row.endpoint, "keys": {"p256dh": row.p256dh, "auth": row.auth}}, data=payload, vapid_private_key=VAPID_PRIVATE_KEY, vapid_claims={"sub": VAPID_CLAIMS_SUBJECT})
             delivered += 1
         except WebPushException as exc:
             failed += 1
-            status_code = getattr(getattr(exc, "response", None), "status_code", None)
-            if status_code in {404, 410}:
-                db.execute(
-                    "DELETE FROM push_subscriptions WHERE endpoint = ?",
-                    (row["endpoint"],),
-                )
+            if getattr(getattr(exc, "response", None), "status_code", None) in {404, 410}:
+                db.delete(row)
     db.commit()
     return delivered, failed
 
 
-def seed_events_if_needed(db: sqlite3.Connection) -> None:
-    existing = db.execute("SELECT COUNT(*) AS count FROM events").fetchone()["count"]
-    if existing:
-      return
-
-    events = [
-        (
-            "April GBM",
-            "GBM",
-            "completed",
-            "Thu, Apr 10",
-            "6:30 PM",
-            "STEM Center 202",
-            50,
-            "General body meeting with chapter updates, member shoutouts, and committee planning.",
-        ),
-        (
-            "SASE Social Night",
-            "Social",
-            "upcoming",
-            "Tue, Apr 15",
-            "7:00 PM",
-            "Student Union Lounge",
-            30,
-            "Relax, meet new members, and build community with games and small group conversations.",
-        ),
-        (
-            "Industry Networking Mixer",
-            "Professional",
-            "upcoming",
-            "Fri, Apr 18",
-            "5:30 PM",
-            "Innovation Atrium",
-            70,
-            "Connect with recruiters, alumni, and professionals across engineering and STEM industries.",
-        ),
-        (
-            "Technical Case Study Workshop",
-            "Workshop",
-            "upcoming",
-            "Wed, Apr 23",
-            "6:00 PM",
-            "Engineering Hall 114",
-            60,
-            "Practice collaborative problem solving and communication with a guided technical challenge.",
-        ),
-    ]
-    db.executemany(
-        """
-        INSERT INTO events (title, type, status, date, time, location, stars, description, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        [(*event, utc_now()) for event in events],
-    )
-    db.commit()
+def row_to_user(user):
+    return {"id": user.id, "name": user.name, "email": user.email, "major": user.major, "year": user.year, "role": user.role, "position": user.position or "", "stars": user.stars, "eligibleForLeaderboard": bool(user.eligible_for_leaderboard), "bio": user.bio or ""}
 
 
-def row_to_user(row: sqlite3.Row) -> dict[str, Any]:
+def serialize_event(event_obj, current_user_id=None):
+    interested_ids = {interest.user_id for interest in event_obj.interests}
+    rsvp_ids = {rsvp.user_id for rsvp in event_obj.rsvps}
+    attendance_ids = {attendance.user_id for attendance in event_obj.attendance_records}
+    return {"id": event_obj.id, "title": event_obj.title, "type": event_obj.type, "status": event_obj.status, "date": event_obj.date, "time": event_obj.time, "location": event_obj.location, "stars": event_obj.stars, "description": event_obj.description, "interestedCount": len(interested_ids), "rsvpCount": len(rsvp_ids), "attendanceCount": len(attendance_ids), "isInterested": current_user_id in interested_ids if current_user_id is not None else False, "isRsvped": current_user_id in rsvp_ids if current_user_id is not None else False, "isAttended": current_user_id in attendance_ids if current_user_id is not None else False, "checkinActive": bool(event_obj.checkin_active), "checkinToken": event_obj.checkin_token or ""}
+
+
+def build_live_checkin_event(event_obj, include_code=False):
+    if event_obj is None:
+        return None
+    payload = {"id": event_obj.id, "title": event_obj.title, "type": event_obj.type, "date": event_obj.date, "time": event_obj.time, "location": event_obj.location, "stars": event_obj.stars, "status": event_obj.status}
+    if include_code:
+        payload["attendanceCode"] = event_obj.attendance_code or ""
+    return payload
+
+
+def get_live_checkin_event(db):
+    return db.scalar(select(Event).where(Event.checkin_active.is_(True)).order_by(Event.id.desc()))
+
+
+def get_current_user(db):
+    user_id = flask_session.get("user_id")
+    return db.get(User, user_id) if user_id else None
+
+
+def get_officers(db):
+    officers = db.scalars(select(User).where(User.role == "officer").order_by(User.name.asc())).all()
+    result = []
+    for user in officers:
+        result.append({"id": user.id, "name": user.name, "role": user.position or "Officer", "major": user.major, "bio": user.bio or "Officer profile ready for customization.", "initials": "".join(part[0].upper() for part in user.name.split()[:2] if part)})
+    return result
+
+
+def build_admin_data():
+    db = get_db()
+    users = db.scalars(select(User).order_by(User.created_at.desc(), User.id.desc())).all()
+    events = db.scalars(select(Event).order_by(Event.created_at.desc(), Event.id.desc())).all()
+    subscriptions = db.scalars(select(PushSubscription).order_by(PushSubscription.created_at.desc())).all()
     return {
-        "id": row["id"],
-        "name": row["name"],
-        "email": row["email"],
-        "major": row["major"],
-        "year": row["year"],
-        "role": row["role"],
-        "position": row["position"] or "",
-        "stars": row["stars"],
-        "eligibleForLeaderboard": bool(row["eligible_for_leaderboard"]),
-        "bio": row["bio"] or "",
+        "stats": {"users": len(users), "members": sum(1 for user in users if user.role == "member"), "officers": sum(1 for user in users if user.role == "officer"), "events": len(events), "liveCheckins": sum(1 for event_obj in events if event_obj.checkin_active), "subscriptions": len(subscriptions), "rsvps": sum(len(event_obj.rsvps) for event_obj in events), "interests": sum(len(event_obj.interests) for event_obj in events), "attendance": sum(len(event_obj.attendance_records) for event_obj in events)},
+        "users": [{"id": user.id, "name": user.name, "email": user.email, "major": user.major, "year": user.year, "role": user.role, "position": user.position or "", "stars": user.stars, "eligibleForLeaderboard": bool(user.eligible_for_leaderboard), "createdAt": user.created_at.isoformat()} for user in users],
+        "events": [{"id": event_obj.id, "title": event_obj.title, "type": event_obj.type, "status": event_obj.status, "date": event_obj.date, "time": event_obj.time, "location": event_obj.location, "stars": event_obj.stars, "checkinActive": bool(event_obj.checkin_active), "attendanceCode": event_obj.attendance_code or "", "interestedCount": len(event_obj.interests), "rsvpCount": len(event_obj.rsvps), "attendanceCount": len(event_obj.attendance_records)} for event_obj in events],
+        "subscriptions": [{"id": subscription.id, "userId": subscription.user_id, "endpoint": subscription.endpoint, "createdAt": subscription.created_at.isoformat()} for subscription in subscriptions],
     }
 
 
-def get_current_user_row() -> sqlite3.Row | None:
-    user_id = session.get("user_id")
-    if not user_id:
-        return None
-    return get_db().execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+def get_dashboard_payload(user):
+    db = get_db()
+    events = db.scalars(select(Event).order_by(Event.id.asc())).all()
+    current_user_id = user.id if user else None
+    leaderboard_users = db.scalars(select(User).where(User.eligible_for_leaderboard.is_(True)).order_by(User.stars.desc(), User.name.asc()).limit(10)).all()
+    live_event = get_live_checkin_event(db)
+    payload = {
+        "user": row_to_user(user) if user else None,
+        "events": [serialize_event(event_obj, current_user_id) for event_obj in events],
+        "officers": get_officers(db),
+        "liveCheckinEvent": build_live_checkin_event(live_event),
+        "adminLiveCheckinEvent": build_live_checkin_event(live_event, include_code=True) if user and user.role == "officer" else None,
+        "notifications": {"supported": push_notifications_configured(), "publicKey": VAPID_PUBLIC_KEY},
+        "leaderboard": [{"name": entry.name, "major": entry.major, "year": entry.year, "stars": entry.stars} for entry in leaderboard_users],
+        "adminData": build_admin_data() if user and user.role == "officer" else None,
+    }
+    return payload
 
 
 def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
-        user = get_current_user_row()
+        user = get_current_user(get_db())
         if user is None:
             return jsonify({"error": "Authentication required."}), 401
         return view(user, *args, **kwargs)
-
     return wrapped
 
 
 def officer_required(view):
     @wraps(view)
     @login_required
-    def wrapped(user: sqlite3.Row, *args, **kwargs):
-        if user["role"] != "officer":
+    def wrapped(user, *args, **kwargs):
+        if user.role != "officer":
             return jsonify({"error": "Officer access required."}), 403
         return view(user, *args, **kwargs)
-
     return wrapped
 
 
-def validate_signup(payload: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
+def validate_signup(payload):
+    db = get_db()
     name = str(payload.get("name", "")).strip()
     email = str(payload.get("email", "")).strip().lower()
     major = str(payload.get("major", "")).strip()
@@ -360,170 +304,22 @@ def validate_signup(payload: dict[str, Any]) -> tuple[str | None, dict[str, Any]
     invite_code = str(payload.get("officerInviteCode", "")).strip()
     position = str(payload.get("position", "")).strip()
     bio = str(payload.get("bio", "")).strip()
-
     if not all([name, email, major, year, password]):
         return "All fields are required.", None
     if year not in YEAR_OPTIONS:
         return "Please choose a valid year.", None
     if len(password) < 6:
         return "Password must be at least 6 characters.", None
-
     role = "member"
-    eligible = 1
+    eligible = True
     if requested_role == "officer":
-        officer_count = get_db().execute(
-            "SELECT COUNT(*) AS count FROM users WHERE role = 'officer'"
-        ).fetchone()["count"]
+        officer_count = db.scalar(select(func.count()).select_from(User).where(User.role == "officer")) or 0
         if officer_count == 0 or invite_code == OFFICER_INVITE_CODE:
             role = "officer"
-            eligible = 0
+            eligible = False
         else:
             return "Officer invite code is required for officer accounts.", None
-
-    return None, {
-        "name": name,
-        "email": email,
-        "major": major,
-        "year": year,
-        "password_hash": generate_password_hash(password),
-        "role": role,
-        "position": position if role == "officer" else "",
-        "eligible_for_leaderboard": eligible,
-        "bio": (
-            bio
-            if role == "officer" and bio
-            else "Officer profile ready for customization."
-            if role == "officer"
-            else ""
-        ),
-    }
-
-
-def serialize_event(row: sqlite3.Row, current_user_id: int | None = None) -> dict[str, Any]:
-    db = get_db()
-    interested_count = db.execute(
-        "SELECT COUNT(*) AS count FROM event_interest WHERE event_id = ?", (row["id"],)
-    ).fetchone()["count"]
-    rsvp_count = db.execute(
-        "SELECT COUNT(*) AS count FROM event_rsvp WHERE event_id = ?", (row["id"],)
-    ).fetchone()["count"]
-    attendance_count = db.execute(
-        "SELECT COUNT(*) AS count FROM event_attendance WHERE event_id = ?", (row["id"],)
-    ).fetchone()["count"]
-
-    is_interested = False
-    is_rsvped = False
-    is_attended = False
-    if current_user_id is not None:
-        is_interested = (
-            db.execute(
-                "SELECT 1 FROM event_interest WHERE user_id = ? AND event_id = ?",
-                (current_user_id, row["id"]),
-            ).fetchone()
-            is not None
-        )
-        is_rsvped = (
-            db.execute(
-                "SELECT 1 FROM event_rsvp WHERE user_id = ? AND event_id = ?",
-                (current_user_id, row["id"]),
-            ).fetchone()
-            is not None
-        )
-        is_attended = (
-            db.execute(
-                "SELECT 1 FROM event_attendance WHERE user_id = ? AND event_id = ?",
-                (current_user_id, row["id"]),
-            ).fetchone()
-            is not None
-        )
-
-    return {
-        "id": row["id"],
-        "title": row["title"],
-        "type": row["type"],
-        "status": row["status"],
-        "date": row["date"],
-        "time": row["time"],
-        "location": row["location"],
-        "stars": row["stars"],
-        "description": row["description"],
-        "interestedCount": interested_count,
-        "rsvpCount": rsvp_count,
-        "attendanceCount": attendance_count,
-        "isInterested": is_interested,
-        "isRsvped": is_rsvped,
-        "isAttended": is_attended,
-        "checkinActive": bool(row["checkin_active"]),
-        "checkinToken": row["checkin_token"] or "",
-    }
-
-
-def get_officers() -> list[dict[str, Any]]:
-    rows = get_db().execute(
-        """
-        SELECT id, name, major, bio, position
-        FROM users
-        WHERE role = 'officer'
-        ORDER BY name COLLATE NOCASE ASC
-        """
-    ).fetchall()
-    officers = []
-    for row in rows:
-        initials = "".join(part[0].upper() for part in row["name"].split()[:2] if part)
-        officers.append(
-            {
-                "id": row["id"],
-                "name": row["name"],
-                "role": row["position"] or "Officer",
-                "major": row["major"],
-                "bio": row["bio"] or "Officer profile ready for customization.",
-                "initials": initials,
-            }
-        )
-    return officers
-
-
-def get_dashboard_payload(user: sqlite3.Row | None) -> dict[str, Any]:
-    db = get_db()
-    current_user_id = user["id"] if user else None
-    event_rows = db.execute("SELECT * FROM events ORDER BY id ASC").fetchall()
-    events = [serialize_event(row, current_user_id) for row in event_rows]
-
-    leaderboard_rows = db.execute(
-        """
-        SELECT name, major, year, stars
-        FROM users
-        WHERE eligible_for_leaderboard = 1
-        ORDER BY stars DESC, name COLLATE NOCASE ASC
-        LIMIT 10
-        """
-    ).fetchall()
-
-    return {
-        "user": row_to_user(user) if user else None,
-        "events": events,
-        "officers": get_officers(),
-        "liveCheckinEvent": build_live_checkin_event(get_live_checkin_event()),
-        "adminLiveCheckinEvent": (
-            build_live_checkin_event(get_live_checkin_event(), include_code=True)
-            if user and user["role"] == "officer"
-            else None
-        ),
-        "notifications": {
-            "supported": push_notifications_configured(),
-            "publicKey": VAPID_PUBLIC_KEY,
-        },
-        "leaderboard": [
-            {
-                "name": row["name"],
-                "major": row["major"],
-                "year": row["year"],
-                "stars": row["stars"],
-            }
-            for row in leaderboard_rows
-        ],
-    }
-
+    return None, {"name": name, "email": email, "major": major, "year": year, "password_hash": generate_password_hash(password), "role": role, "position": position if role == "officer" else "", "eligible_for_leaderboard": eligible, "bio": bio if role == "officer" and bio else "Officer profile ready for customization." if role == "officer" else ""}
 
 @app.route("/")
 def root():
@@ -532,7 +328,7 @@ def root():
 
 
 @app.route("/<path:path>")
-def static_files(path: str):
+def static_files(path):
     init_db()
     return send_from_directory(BASE_DIR, path)
 
@@ -540,7 +336,7 @@ def static_files(path: str):
 @app.get("/api/bootstrap")
 def bootstrap():
     init_db()
-    return jsonify(get_dashboard_payload(get_current_user_row()))
+    return jsonify(get_dashboard_payload(get_current_user(get_db())))
 
 
 @app.post("/api/auth/signup")
@@ -550,36 +346,15 @@ def signup():
     error, values = validate_signup(payload)
     if error:
         return jsonify({"error": error}), 400
-
     db = get_db()
+    user = User(name=values["name"], email=values["email"], password_hash=values["password_hash"], major=values["major"], year=values["year"], role=values["role"], position=values["position"], eligible_for_leaderboard=values["eligible_for_leaderboard"], bio=values["bio"], created_at=utc_now())
+    db.add(user)
     try:
-        cursor = db.execute(
-            """
-            INSERT INTO users (
-              name, email, password_hash, major, year, role,
-              position, eligible_for_leaderboard, bio, created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                values["name"],
-                values["email"],
-                values["password_hash"],
-                values["major"],
-                values["year"],
-                values["role"],
-                values["position"],
-                values["eligible_for_leaderboard"],
-                values["bio"],
-                utc_now(),
-            ),
-        )
-    except sqlite3.IntegrityError:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
         return jsonify({"error": "An account with that email already exists."}), 409
-
-    db.commit()
-    session["user_id"] = cursor.lastrowid
-    user = db.execute("SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    flask_session["user_id"] = user.id
     return jsonify(get_dashboard_payload(user)), 201
 
 
@@ -591,271 +366,181 @@ def login():
     password = str(payload.get("password", ""))
     if not email or not password:
         return jsonify({"error": "Email and password are required."}), 400
-
-    user = get_db().execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-    if user is None or not check_password_hash(user["password_hash"], password):
+    db = get_db()
+    user = db.scalar(select(User).where(User.email == email))
+    if user is None or not check_password_hash(user.password_hash, password):
         return jsonify({"error": "We could not match that email and password."}), 401
-
-    session["user_id"] = user["id"]
+    flask_session["user_id"] = user.id
     return jsonify(get_dashboard_payload(user))
 
 
 @app.post("/api/auth/logout")
 def logout():
-    session.clear()
+    flask_session.clear()
     return jsonify({"ok": True})
 
 
 @app.get("/api/me")
 @login_required
-def me(user: sqlite3.Row):
+def me(user):
     return jsonify(get_dashboard_payload(user))
 
 
 @app.patch("/api/me")
 @login_required
-def update_profile(user: sqlite3.Row):
+def update_profile(user):
     payload = request.get_json(silent=True) or {}
     name = str(payload.get("name", "")).strip()
     major = str(payload.get("major", "")).strip()
     year = str(payload.get("year", "")).strip()
     position = str(payload.get("position", "")).strip()
     bio = str(payload.get("bio", "")).strip()
-
     if not all([name, major, year]) or year not in YEAR_OPTIONS:
         return jsonify({"error": "Please provide a valid name, major, and year."}), 400
-
     db = get_db()
-    db.execute(
-        "UPDATE users SET name = ?, major = ?, year = ?, position = ?, bio = ? WHERE id = ?",
-        (
-            name,
-            major,
-            year,
-            position if user["role"] == "officer" else "",
-            bio if user["role"] == "officer" else "",
-            user["id"],
-        ),
-    )
+    user.name = name
+    user.major = major
+    user.year = year
+    user.position = position if user.role == "officer" else ""
+    user.bio = bio if user.role == "officer" else ""
     db.commit()
-    updated_user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
-    return jsonify(get_dashboard_payload(updated_user))
+    return jsonify(get_dashboard_payload(user))
 
 
 @app.post("/api/events/<int:event_id>/interest")
 @login_required
-def toggle_interest(user: sqlite3.Row, event_id: int):
+def toggle_interest(user, event_id):
     db = get_db()
-    event_row = db.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
-    if event_row is None or event_row["status"] == "completed":
+    event_obj = db.get(Event, event_id)
+    if event_obj is None or event_obj.status == "completed":
         return jsonify({"error": "This event is not available for interest tracking."}), 400
-
-    existing = db.execute(
-        "SELECT 1 FROM event_interest WHERE user_id = ? AND event_id = ?",
-        (user["id"], event_id),
-    ).fetchone()
+    existing = db.get(EventInterest, {"user_id": user.id, "event_id": event_id})
     if existing:
-        db.execute(
-            "DELETE FROM event_interest WHERE user_id = ? AND event_id = ?",
-            (user["id"], event_id),
-        )
+        db.delete(existing)
     else:
-        db.execute(
-            "INSERT INTO event_interest (user_id, event_id, created_at) VALUES (?, ?, ?)",
-            (user["id"], event_id, utc_now()),
-        )
+        db.add(EventInterest(user_id=user.id, event_id=event_id, created_at=utc_now()))
     db.commit()
-    refreshed_user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
-    return jsonify(get_dashboard_payload(refreshed_user))
+    return jsonify(get_dashboard_payload(user))
 
 
 @app.post("/api/events/<int:event_id>/rsvp")
 @login_required
-def toggle_rsvp(user: sqlite3.Row, event_id: int):
+def toggle_rsvp(user, event_id):
     db = get_db()
-    event_row = db.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
-    if event_row is None or event_row["status"] == "completed":
+    event_obj = db.get(Event, event_id)
+    if event_obj is None or event_obj.status == "completed":
         return jsonify({"error": "This event is not open for RSVP."}), 400
-
-    existing = db.execute(
-        "SELECT 1 FROM event_rsvp WHERE user_id = ? AND event_id = ?",
-        (user["id"], event_id),
-    ).fetchone()
+    existing = db.get(EventRsvp, {"user_id": user.id, "event_id": event_id})
     if existing:
-        db.execute(
-            "DELETE FROM event_rsvp WHERE user_id = ? AND event_id = ?",
-            (user["id"], event_id),
-        )
+        db.delete(existing)
     else:
-        db.execute(
-            "INSERT INTO event_rsvp (user_id, event_id, created_at) VALUES (?, ?, ?)",
-            (user["id"], event_id, utc_now()),
-        )
-        db.execute(
-            "DELETE FROM event_interest WHERE user_id = ? AND event_id = ?",
-            (user["id"], event_id),
-        )
+        db.add(EventRsvp(user_id=user.id, event_id=event_id, created_at=utc_now()))
+        interest = db.get(EventInterest, {"user_id": user.id, "event_id": event_id})
+        if interest:
+            db.delete(interest)
     db.commit()
-    refreshed_user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
-    return jsonify(get_dashboard_payload(refreshed_user))
+    return jsonify(get_dashboard_payload(user))
 
 
 @app.get("/api/checkin/<token>")
-def checkin_preview(token: str):
+def checkin_preview(token):
     init_db()
-    event_row = get_db().execute(
-        "SELECT * FROM events WHERE checkin_token = ?",
-        (token,),
-    ).fetchone()
-    if event_row is None:
+    db = get_db()
+    event_obj = db.scalar(select(Event).where(Event.checkin_token == token))
+    if event_obj is None:
         return jsonify({"error": "That check-in link is not valid."}), 404
-
-    return jsonify(
-        {
-            "event": {
-                "id": event_row["id"],
-                "title": event_row["title"],
-                "date": event_row["date"],
-                "time": event_row["time"],
-                "location": event_row["location"],
-                "stars": event_row["stars"],
-                "checkinActive": bool(event_row["checkin_active"]),
-            }
-        }
-    )
+    return jsonify({"event": {"id": event_obj.id, "title": event_obj.title, "date": event_obj.date, "time": event_obj.time, "location": event_obj.location, "stars": event_obj.stars, "checkinActive": bool(event_obj.checkin_active)}})
 
 
 @app.post("/api/checkin/<token>")
 @login_required
-def claim_checkin(user: sqlite3.Row, token: str):
+def claim_checkin(user, token):
     db = get_db()
-    event_row = db.execute(
-        "SELECT * FROM events WHERE checkin_token = ?",
-        (token,),
-    ).fetchone()
-    if event_row is None:
+    event_obj = db.scalar(select(Event).where(Event.checkin_token == token))
+    if event_obj is None:
         return jsonify({"error": "That check-in link is not valid."}), 404
-    if not event_row["checkin_active"]:
+    if not event_obj.checkin_active:
         return jsonify({"error": "Check-in is not active for this event right now."}), 400
-
-    already_attended = db.execute(
-        "SELECT 1 FROM event_attendance WHERE user_id = ? AND event_id = ?",
-        (user["id"], event_row["id"]),
-    ).fetchone()
+    already_attended = db.get(EventAttendance, {"user_id": user.id, "event_id": event_obj.id})
     if already_attended:
-        refreshed_user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
-        payload = get_dashboard_payload(refreshed_user)
-        payload["checkinMessage"] = f"You were already checked in for {event_row['title']}."
+        payload = get_dashboard_payload(user)
+        payload["checkinMessage"] = f"You were already checked in for {event_obj.title}."
         return jsonify(payload)
-
-    db.execute(
-        "INSERT INTO event_attendance (user_id, event_id, created_at) VALUES (?, ?, ?)",
-        (user["id"], event_row["id"], utc_now()),
-    )
-    db.execute(
-        "UPDATE users SET stars = stars + ? WHERE id = ?",
-        (event_row["stars"], user["id"]),
-    )
+    db.add(EventAttendance(user_id=user.id, event_id=event_obj.id, created_at=utc_now()))
+    user.stars += event_obj.stars
     db.commit()
-    refreshed_user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
-    payload = get_dashboard_payload(refreshed_user)
-    payload["checkinMessage"] = f"Attendance confirmed for {event_row['title']}. You earned {event_row['stars']} stars."
+    payload = get_dashboard_payload(user)
+    payload["checkinMessage"] = f"Attendance confirmed for {event_obj.title}. You earned {event_obj.stars} stars."
     return jsonify(payload)
 
 
 @app.post("/api/live-checkin")
 @login_required
-def claim_live_checkin(user: sqlite3.Row):
+def claim_live_checkin(user):
     payload = request.get_json(silent=True) or {}
     submitted_code = str(payload.get("attendanceCode", "")).strip().upper()
     if not submitted_code:
         return jsonify({"error": "Enter the live attendance code for the event."}), 400
-
     db = get_db()
-    event_row = get_live_checkin_event()
-    if event_row is None:
+    event_obj = get_live_checkin_event(db)
+    if event_obj is None:
         return jsonify({"error": "There is no live event check-in right now."}), 400
-    if event_row["attendance_code"] != submitted_code:
+    if (event_obj.attendance_code or "") != submitted_code:
         return jsonify({"error": "That attendance code is not correct."}), 400
-
-    already_attended = db.execute(
-        "SELECT 1 FROM event_attendance WHERE user_id = ? AND event_id = ?",
-        (user["id"], event_row["id"]),
-    ).fetchone()
+    already_attended = db.get(EventAttendance, {"user_id": user.id, "event_id": event_obj.id})
     if already_attended:
-        refreshed_user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
-        data = get_dashboard_payload(refreshed_user)
-        data["checkinMessage"] = f"You were already checked in for {event_row['title']}."
+        data = get_dashboard_payload(user)
+        data["checkinMessage"] = f"You were already checked in for {event_obj.title}."
         return jsonify(data)
-
-    db.execute(
-        "INSERT INTO event_attendance (user_id, event_id, created_at) VALUES (?, ?, ?)",
-        (user["id"], event_row["id"], utc_now()),
-    )
-    db.execute(
-        "UPDATE users SET stars = stars + ? WHERE id = ?",
-        (event_row["stars"], user["id"]),
-    )
+    db.add(EventAttendance(user_id=user.id, event_id=event_obj.id, created_at=utc_now()))
+    user.stars += event_obj.stars
     db.commit()
-    refreshed_user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
-    data = get_dashboard_payload(refreshed_user)
-    data["checkinMessage"] = (
-        f"Attendance confirmed for {event_row['title']}. You earned {event_row['stars']} stars."
-    )
+    data = get_dashboard_payload(user)
+    data["checkinMessage"] = f"Attendance confirmed for {event_obj.title}. You earned {event_obj.stars} stars."
     return jsonify(data)
-
 
 @app.post("/api/notifications/subscribe")
 @login_required
-def save_push_subscription(user: sqlite3.Row):
+def save_push_subscription(user):
     if not push_notifications_configured():
         return jsonify({"error": "Push notifications are not configured yet."}), 400
-
     payload = request.get_json(silent=True) or {}
     endpoint = str(payload.get("endpoint", "")).strip()
     keys = payload.get("keys") or {}
     p256dh = str(keys.get("p256dh", "")).strip()
     auth = str(keys.get("auth", "")).strip()
-
     if not endpoint or not p256dh or not auth:
         return jsonify({"error": "A valid push subscription is required."}), 400
-
     db = get_db()
-    db.execute(
-        """
-        INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, created_at)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(endpoint) DO UPDATE SET
-          user_id = excluded.user_id,
-          p256dh = excluded.p256dh,
-          auth = excluded.auth
-        """,
-        (user["id"], endpoint, p256dh, auth, utc_now()),
-    )
+    existing = db.scalar(select(PushSubscription).where(PushSubscription.endpoint == endpoint))
+    if existing:
+        existing.user_id = user.id
+        existing.p256dh = p256dh
+        existing.auth = auth
+    else:
+        db.add(PushSubscription(user_id=user.id, endpoint=endpoint, p256dh=p256dh, auth=auth, created_at=utc_now()))
     db.commit()
     return jsonify({"ok": True})
 
 
 @app.post("/api/notifications/unsubscribe")
 @login_required
-def delete_push_subscription(user: sqlite3.Row):
+def delete_push_subscription(user):
     payload = request.get_json(silent=True) or {}
     endpoint = str(payload.get("endpoint", "")).strip()
     if not endpoint:
         return jsonify({"error": "Subscription endpoint is required."}), 400
-
     db = get_db()
-    db.execute(
-        "DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?",
-        (user["id"], endpoint),
-    )
-    db.commit()
+    subscription = db.scalar(select(PushSubscription).where(PushSubscription.user_id == user.id, PushSubscription.endpoint == endpoint))
+    if subscription:
+        db.delete(subscription)
+        db.commit()
     return jsonify({"ok": True})
 
 
 @app.post("/api/admin/events")
 @officer_required
-def create_event(_: sqlite3.Row):
+def create_event(user):
     payload = request.get_json(silent=True) or {}
     title = str(payload.get("title", "")).strip()
     event_type = str(payload.get("type", "")).strip()
@@ -868,183 +553,124 @@ def create_event(_: sqlite3.Row):
         stars = int(payload.get("stars", 0))
     except (TypeError, ValueError):
         stars = -1
-
     if not all([title, event_type, status, date, time_value, location, description]):
         return jsonify({"error": "All event fields are required."}), 400
     if event_type not in EVENT_TYPES or status not in EVENT_STATUSES or stars < 0:
         return jsonify({"error": "Please provide a valid event type, status, and stars value."}), 400
-
     db = get_db()
-    db.execute(
-        """
-        INSERT INTO events (title, type, status, date, time, location, stars, description, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (title, event_type, status, date, time_value, location, stars, description, utc_now()),
-    )
+    db.add(Event(title=title, type=event_type, status=status, date=date, time=time_value, location=location, stars=stars, description=description, created_by=user.id, created_at=utc_now()))
     db.commit()
-    return jsonify(get_dashboard_payload(get_current_user_row())), 201
+    return jsonify(get_dashboard_payload(user)), 201
 
 
 @app.post("/api/admin/events/<int:event_id>/checkin/start")
 @officer_required
-def start_checkin(_: sqlite3.Row, event_id: int):
+def start_checkin(_, event_id):
     db = get_db()
-    event_row = db.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
-    if event_row is None:
+    event_obj = db.get(Event, event_id)
+    if event_obj is None:
         return jsonify({"error": "Event not found."}), 404
-
-    token = event_row["checkin_token"] or secrets.token_urlsafe(16)
+    token = event_obj.checkin_token or secrets.token_urlsafe(16)
     attendance_code = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(6))
-    db.execute("UPDATE events SET checkin_active = 0 WHERE id != ?", (event_id,))
-    db.execute(
-        "UPDATE events SET checkin_token = ?, checkin_active = 1, attendance_code = ? WHERE id = ?",
-        (token, attendance_code, event_id),
-    )
+    for live_event in db.scalars(select(Event).where(Event.id != event_id, Event.checkin_active.is_(True))).all():
+        live_event.checkin_active = False
+        live_event.attendance_code = None
+    event_obj.checkin_token = token
+    event_obj.checkin_active = True
+    event_obj.attendance_code = attendance_code
     db.commit()
-    payload = get_dashboard_payload(get_current_user_row())
+    payload = get_dashboard_payload(get_current_user(db))
     payload["checkinLink"] = f"/?checkin={token}"
     return jsonify(payload)
 
 
 @app.post("/api/admin/events/<int:event_id>/checkin/stop")
 @officer_required
-def stop_checkin(_: sqlite3.Row, event_id: int):
+def stop_checkin(_, event_id):
     db = get_db()
-    event_row = db.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
-    if event_row is None:
+    event_obj = db.get(Event, event_id)
+    if event_obj is None:
         return jsonify({"error": "Event not found."}), 404
-
-    db.execute(
-        "UPDATE events SET checkin_active = 0, attendance_code = NULL WHERE id = ?",
-        (event_id,),
-    )
+    event_obj.checkin_active = False
+    event_obj.attendance_code = None
     db.commit()
-    return jsonify(get_dashboard_payload(get_current_user_row()))
+    return jsonify(get_dashboard_payload(get_current_user(db)))
 
 
 @app.delete("/api/admin/events/<int:event_id>")
 @officer_required
-def delete_event(_: sqlite3.Row, event_id: int):
+def delete_event(_, event_id):
     db = get_db()
-    event_row = db.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
-    if event_row is None:
+    event_obj = db.get(Event, event_id)
+    if event_obj is None:
         return jsonify({"error": "Event not found."}), 404
-
-    attendee_ids = db.execute(
-        "SELECT user_id FROM event_attendance WHERE event_id = ?",
-        (event_id,),
-    ).fetchall()
-    for attendee in attendee_ids:
-        db.execute(
-            "UPDATE users SET stars = MAX(0, stars - ?) WHERE id = ?",
-            (event_row["stars"], attendee["user_id"]),
-        )
-
-    db.execute("DELETE FROM events WHERE id = ?", (event_id,))
+    for attendance in list(event_obj.attendance_records):
+        attendee = db.get(User, attendance.user_id)
+        if attendee is not None:
+            attendee.stars = max(0, attendee.stars - event_obj.stars)
+    db.delete(event_obj)
     db.commit()
-    return jsonify(get_dashboard_payload(get_current_user_row()))
+    return jsonify(get_dashboard_payload(get_current_user(db)))
 
 
 @app.post("/api/admin/promote")
 @officer_required
-def promote_member(_: sqlite3.Row):
+def promote_member(_):
     payload = request.get_json(silent=True) or {}
     email = str(payload.get("email", "")).strip().lower()
     if not email:
         return jsonify({"error": "Email is required."}), 400
     db = get_db()
-    db.execute(
-        """
-        UPDATE users
-        SET role = 'officer',
-            eligible_for_leaderboard = 0,
-            position = COALESCE(NULLIF(position, ''), 'Officer'),
-            bio = COALESCE(NULLIF(bio, ''), 'Officer profile ready for customization.')
-        WHERE email = ?
-        """,
-        (email,),
-    )
+    user = db.scalar(select(User).where(User.email == email))
+    if user is None:
+        return jsonify({"error": "No member account matches that email."}), 404
+    user.role = "officer"
+    user.eligible_for_leaderboard = False
+    user.position = user.position or "Officer"
+    user.bio = user.bio or "Officer profile ready for customization."
     db.commit()
-    return jsonify(get_dashboard_payload(get_current_user_row()))
+    return jsonify(get_dashboard_payload(get_current_user(db)))
 
+
+@app.get("/api/admin/data")
+@officer_required
+def admin_data(_):
+    return jsonify(build_admin_data())
 
 @app.post("/api/admin/events/<int:event_id>/notify")
 @officer_required
-def notify_event_members(_: sqlite3.Row, event_id: int):
+def notify_event_members(_, event_id):
     if not push_notifications_configured():
         return jsonify({"error": "Push notifications are not configured on the server yet."}), 400
-
     payload = request.get_json(silent=True) or {}
     notification_type = str(payload.get("type", "")).strip().lower()
     audience = str(payload.get("audience", "rsvp")).strip().lower()
     custom_message = str(payload.get("message", "")).strip()
-
     if notification_type not in {"reminder", "location", "update", "checkin"}:
         return jsonify({"error": "Choose a valid notification type."}), 400
     if audience not in {"interested", "rsvp", "both"}:
         return jsonify({"error": "Choose a valid audience."}), 400
-
     db = get_db()
-    event_row = db.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
-    if event_row is None:
+    event_obj = db.get(Event, event_id)
+    if event_obj is None:
         return jsonify({"error": "Event not found."}), 404
-
-    audience_sql = []
-    params: list[Any] = [event_id]
+    recipients = {}
     if audience in {"interested", "both"}:
-        audience_sql.append(
-            """
-            SELECT DISTINCT ps.*
-            FROM push_subscriptions ps
-            INNER JOIN event_interest ei ON ei.user_id = ps.user_id
-            WHERE ei.event_id = ?
-            """
-        )
+        for record in event_obj.interests:
+            for subscription in record.user.push_subscriptions:
+                recipients[subscription.endpoint] = subscription
     if audience in {"rsvp", "both"}:
-        audience_sql.append(
-            """
-            SELECT DISTINCT ps.*
-            FROM push_subscriptions ps
-            INNER JOIN event_rsvp er ON er.user_id = ps.user_id
-            WHERE er.event_id = ?
-            """
-        )
-        if audience == "both":
-            params.append(event_id)
-
-    query = " UNION ".join(audience_sql)
-    subscription_rows = db.execute(query, tuple(params)).fetchall()
-
-    title_map = {
-        "reminder": f"Reminder: {event_row['title']}",
-        "location": f"Location update: {event_row['title']}",
-        "update": f"Update: {event_row['title']}",
-        "checkin": f"Attendance live: {event_row['title']}",
-    }
-    default_message_map = {
-        "reminder": f"{event_row['title']} starts on {event_row['date']} at {event_row['time']} in {event_row['location']}.",
-        "location": f"The location for {event_row['title']} is now {event_row['location']}.",
-        "update": f"There is a new update for {event_row['title']}. Open the SASE app for details.",
-        "checkin": f"Attendance is now live for {event_row['title']}. Open the app and enter today's attendance code.",
-    }
-    body = custom_message or default_message_map[notification_type]
-    delivered, failed = send_push_to_rows(
-        subscription_rows,
-        build_push_payload(title_map[notification_type], body, event_row),
-    )
-
-    response = get_dashboard_payload(get_current_user_row())
-    response["notificationSummary"] = {
-        "sent": delivered,
-        "failed": failed,
-        "audience": audience,
-        "type": notification_type,
-    }
+        for record in event_obj.rsvps:
+            for subscription in record.user.push_subscriptions:
+                recipients[subscription.endpoint] = subscription
+    title_map = {"reminder": f"Reminder: {event_obj.title}", "location": f"Location update: {event_obj.title}", "update": f"Update: {event_obj.title}", "checkin": f"Attendance live: {event_obj.title}"}
+    default_message_map = {"reminder": f"{event_obj.title} starts on {event_obj.date} at {event_obj.time} in {event_obj.location}.", "location": f"The location for {event_obj.title} is now {event_obj.location}.", "update": f"There is a new update for {event_obj.title}. Open the SASE app for details.", "checkin": f"Attendance is now live for {event_obj.title}. Open the app and enter today's attendance code."}
+    delivered, failed = send_push_to_rows(list(recipients.values()), build_push_payload(title_map[notification_type], custom_message or default_message_map[notification_type], event_obj))
+    response = get_dashboard_payload(get_current_user(db))
+    response["notificationSummary"] = {"sent": delivered, "failed": failed, "audience": audience, "type": notification_type}
     return jsonify(response)
 
 
 if __name__ == "__main__":
-    with app.app_context():
-        init_db()
+    init_db()
     app.run(host="0.0.0.0", port=8000, debug=True)

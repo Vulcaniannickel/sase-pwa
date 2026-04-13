@@ -6,7 +6,7 @@ This project is now a real shared full-stack club app.
 
 - Frontend: installable PWA served from the same app
 - Backend: Flask
-- Database: SQLite
+- Database: Postgres in production, SQLite fallback locally
 - Auth: secure password hashing with Flask sessions
 
 ## What is shared now
@@ -52,10 +52,12 @@ Basic Render flow:
 
 1. Push this project to a GitHub repository
 2. Create a new Render web service from that repo
-3. Set `OFFICER_INVITE_CODE` in Render
-4. Set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_CLAIMS_SUBJECT` in Render if you want push notifications
-5. Let Render build and deploy the app
-6. Use the public Render URL for your QR codes
+3. Create a Postgres database in Render
+4. Copy the Postgres internal database URL into `DATABASE_URL`
+5. Set `OFFICER_INVITE_CODE` in Render
+6. Set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_CLAIMS_SUBJECT` in Render if you want push notifications
+7. Let Render build and deploy the app
+8. Use the public Render URL for your QR codes
 
 ## Can you still edit it after it is public?
 
@@ -130,9 +132,22 @@ VAPID_CLAIMS_SUBJECT
 
 You can generate a VAPID keypair with a web-push tool or an online generator, then copy those values into Render.
 
+## Backend data view
+
+Officer accounts now get an extra `Backend Data` panel in the `Admin` tab. It shows:
+
+- total users, officers, events, RSVPs, attendance, and push subscriptions
+- a snapshot of recent user records from the shared backend
+
+There is also an officer-only API endpoint:
+
+```text
+/api/admin/data
+```
+
 ## Notes before public launch
 
-- SQLite is fine for early real use and testing, but for a larger public rollout you may want Postgres later.
+- Use Postgres in production. SQLite is only a local fallback.
 - Do not commit your live database file.
-- If you deploy publicly, set a real `SECRET_KEY`, `OFFICER_INVITE_CODE`, and VAPID keys for notifications.
+- If you deploy publicly, set a real `SECRET_KEY`, `OFFICER_INVITE_CODE`, `DATABASE_URL`, and VAPID keys for notifications.
 - The next strong upgrade would be attendance windows, expiring check-in tokens, and officer-only manual attendance overrides.

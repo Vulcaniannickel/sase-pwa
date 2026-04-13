@@ -7,6 +7,7 @@ let appState = {
   leaderboard: [],
   liveCheckinEvent: null,
   adminLiveCheckinEvent: null,
+  adminData: null,
   notifications: {
     supported: false,
     publicKey: ""
@@ -23,6 +24,13 @@ const checkinPromptEvent = document.getElementById("checkinPromptEvent");
 const checkinStatusBanner = document.getElementById("checkinStatusBanner");
 const loginForm = document.getElementById("loginForm");
 const signupForm = document.getElementById("signupForm");
+const signupRoleSelect = document.getElementById("signupRoleSelect");
+const signupOfficerInviteField = document.getElementById("signupOfficerInviteField");
+const signupOfficerInviteInput = document.getElementById("signupOfficerInviteInput");
+const signupOfficerPositionField = document.getElementById("signupOfficerPositionField");
+const signupOfficerPositionInput = document.getElementById("signupOfficerPositionInput");
+const signupOfficerBioField = document.getElementById("signupOfficerBioField");
+const signupOfficerBioInput = document.getElementById("signupOfficerBioInput");
 const loginNote = document.getElementById("loginNote");
 const signupNote = document.getElementById("signupNote");
 const profileForm = document.getElementById("profileForm");
@@ -48,6 +56,8 @@ const adminEventList = document.getElementById("adminEventList");
 const adminCheckinLinkBox = document.getElementById("adminCheckinLinkBox");
 const adminAttendanceCode = document.getElementById("adminAttendanceCode");
 const adminAttendanceEvent = document.getElementById("adminAttendanceEvent");
+const adminDataStats = document.getElementById("adminDataStats");
+const adminDataUsers = document.getElementById("adminDataUsers");
 const installButton = document.getElementById("installButton");
 const adminTabButton = document.getElementById("adminTabButton");
 const adminView = document.getElementById("adminView");
@@ -117,6 +127,35 @@ function showAuthView(target) {
   signupForm.classList.toggle("hidden", target !== "signup");
   loginNote.textContent = "";
   signupNote.textContent = "";
+  updateSignupRoleFields();
+}
+
+function updateSignupRoleFields() {
+  const isOfficer = signupRoleSelect?.value === "officer";
+  signupOfficerInviteField?.classList.toggle("hidden", !isOfficer);
+  signupOfficerPositionField?.classList.toggle("hidden", !isOfficer);
+  signupOfficerBioField?.classList.toggle("hidden", !isOfficer);
+
+  if (signupOfficerInviteInput) {
+    signupOfficerInviteInput.disabled = !isOfficer;
+    if (!isOfficer) {
+      signupOfficerInviteInput.value = "";
+    }
+  }
+
+  if (signupOfficerPositionInput) {
+    signupOfficerPositionInput.disabled = !isOfficer;
+    if (!isOfficer) {
+      signupOfficerPositionInput.value = "";
+    }
+  }
+
+  if (signupOfficerBioInput) {
+    signupOfficerBioInput.disabled = !isOfficer;
+    if (!isOfficer) {
+      signupOfficerBioInput.value = "";
+    }
+  }
 }
 
 function urlBase64ToUint8Array(base64String) {
@@ -240,6 +279,8 @@ authTabButtons.forEach((button) => {
   button.addEventListener("click", () => showAuthView(button.dataset.authView));
 });
 
+signupRoleSelect?.addEventListener("change", updateSignupRoleFields);
+
 navButtons.forEach((button) => {
   button.addEventListener("click", (event) => {
     if (button.tagName === "A") {
@@ -296,6 +337,7 @@ signupForm.addEventListener("submit", async (event) => {
       })
     });
     signupForm.reset();
+    updateSignupRoleFields();
     await claimPendingCheckin();
     renderApp();
     await syncNotificationButtonState();
@@ -406,6 +448,7 @@ logoutButton.addEventListener("click", async () => {
     leaderboard: [],
     liveCheckinEvent: null,
     adminLiveCheckinEvent: null,
+    adminData: null,
     notifications: { supported: false, publicKey: "" },
     checkinMessage: ""
   };
@@ -654,6 +697,42 @@ function renderNotificationEventOptions() {
   });
 }
 
+function renderAdminData() {
+  adminDataStats.innerHTML = "";
+  adminDataUsers.innerHTML = "";
+
+  if (!appState.adminData) {
+    adminDataUsers.appendChild(createEmptyState("Backend data will appear here for officer accounts."));
+    return;
+  }
+
+  const stats = appState.adminData.stats;
+  [
+    ["Users", stats.users],
+    ["Officers", stats.officers],
+    ["Events", stats.events],
+    ["RSVPs", stats.rsvps],
+    ["Attendance", stats.attendance],
+    ["Subscriptions", stats.subscriptions]
+  ].forEach(([label, value]) => {
+    const article = document.createElement("article");
+    article.innerHTML = `<span>${label}</span><strong>${value}</strong>`;
+    adminDataStats.appendChild(article);
+  });
+
+  appState.adminData.users.slice(0, 12).forEach((user) => {
+    const row = document.createElement("article");
+    row.className = "admin-event-row";
+    row.innerHTML = `
+      <strong>${user.name}</strong>
+      <div class="admin-event-meta">${user.email}</div>
+      <div class="admin-event-meta">${user.role}${user.position ? ` - ${user.position}` : ""} - ${user.major} - ${user.year}</div>
+      <div class="admin-event-meta">${user.stars} stars</div>
+    `;
+    adminDataUsers.appendChild(row);
+  });
+}
+
 function renderAdmin() {
   const isOfficer = appState.user?.role === "officer";
   adminTabButton.classList.toggle("hidden", !isOfficer);
@@ -662,6 +741,8 @@ function renderAdmin() {
 
   if (!isOfficer) {
     adminCheckinLinkBox.classList.add("hidden");
+    adminDataStats.innerHTML = "";
+    adminDataUsers.innerHTML = "";
     if (document.querySelector(".view.active")?.dataset.view === "admin") {
       showTab("home");
     }
@@ -669,6 +750,7 @@ function renderAdmin() {
   }
 
   renderNotificationEventOptions();
+  renderAdminData();
 
   const activeEvent = appState.adminLiveCheckinEvent;
   adminCheckinLinkBox.classList.toggle("hidden", !activeEvent);
@@ -833,6 +915,7 @@ apiFetch("/api/bootstrap")
       await claimPendingCheckin();
       renderApp();
     }
+    updateSignupRoleFields();
     await syncNotificationButtonState();
   })
   .catch((error) => {

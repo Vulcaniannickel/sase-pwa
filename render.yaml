@@ -1,3 +1,8 @@
+databases:
+  - name: sase-student-portal-db
+    databaseName: sase_student_portal
+    plan: free
+
 services:
   - type: web
     name: sase-student-portal
@@ -9,6 +14,10 @@ services:
         generateValue: true
       - key: OFFICER_INVITE_CODE
         sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sase-student-portal-db
+          property: connectionString
       - key: VAPID_PUBLIC_KEY
         sync: false
       - key: VAPID_PRIVATE_KEY
