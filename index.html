@@ -100,6 +100,14 @@
             Officer invite code
             <input type="text" name="officerInviteCode" placeholder="Required only for officer sign-up">
           </label>
+          <label>
+            Officer position
+            <input type="text" name="position" placeholder="President, Treasurer, Events Director">
+          </label>
+          <label>
+            About you
+            <textarea name="bio" rows="3" placeholder="Optional short intro for the Officers section"></textarea>
+          </label>
           <button class="button button-primary" type="submit">Create Profile</button>
           <p class="form-note" id="signupNote" aria-live="polite"></p>
         </form>
@@ -186,6 +194,14 @@
                 <label>
                   SASE Stars
                   <input id="profileStarsInput" type="text" disabled>
+                </label>
+                <label id="profilePositionField" class="hidden">
+                  Officer position
+                  <input id="profilePositionInput" name="position" type="text" placeholder="President, Treasurer, Events Director">
+                </label>
+                <label id="profileBioField" class="hidden">
+                  About you
+                  <textarea id="profileBioInput" name="bio" rows="4" placeholder="Share a quick intro for members."></textarea>
                 </label>
                 <button class="button button-primary" type="submit">Save Profile</button>
                 <p class="form-note" id="profileNote" aria-live="polite"></p>

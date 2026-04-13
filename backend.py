@@ -65,6 +65,7 @@ def init_db() -> None:
       major TEXT NOT NULL,
       year TEXT NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('member', 'officer')),
+      position TEXT,
       stars INTEGER NOT NULL DEFAULT 0,
       eligible_for_leaderboard INTEGER NOT NULL DEFAULT 1,
       bio TEXT,
@@ -118,9 +119,19 @@ def init_db() -> None:
     db = get_db()
     with closing(db.cursor()) as cursor:
         cursor.executescript(schema)
+        ensure_user_columns(cursor)
         ensure_event_columns(cursor)
     db.commit()
     seed_events_if_needed(db)
+
+
+def ensure_user_columns(cursor: sqlite3.Cursor) -> None:
+    columns = {
+        row["name"]
+        for row in cursor.execute("PRAGMA table_info(users)").fetchall()
+    }
+    if "position" not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN position TEXT")
 
 
 def ensure_event_columns(cursor: sqlite3.Cursor) -> None:
@@ -199,6 +210,7 @@ def row_to_user(row: sqlite3.Row) -> dict[str, Any]:
         "major": row["major"],
         "year": row["year"],
         "role": row["role"],
+        "position": row["position"] or "",
         "stars": row["stars"],
         "eligibleForLeaderboard": bool(row["eligible_for_leaderboard"]),
         "bio": row["bio"] or "",
@@ -242,6 +254,8 @@ def validate_signup(payload: dict[str, Any]) -> tuple[str | None, dict[str, Any]
     password = str(payload.get("password", ""))
     requested_role = str(payload.get("role", "member")).strip()
     invite_code = str(payload.get("officerInviteCode", "")).strip()
+    position = str(payload.get("position", "")).strip()
+    bio = str(payload.get("bio", "")).strip()
 
     if not all([name, email, major, year, password]):
         return "All fields are required.", None
@@ -269,8 +283,15 @@ def validate_signup(payload: dict[str, Any]) -> tuple[str | None, dict[str, Any]
         "year": year,
         "password_hash": generate_password_hash(password),
         "role": role,
+        "position": position if role == "officer" else "",
         "eligible_for_leaderboard": eligible,
-        "bio": "Officer profile ready for customization." if role == "officer" else "",
+        "bio": (
+            bio
+            if role == "officer" and bio
+            else "Officer profile ready for customization."
+            if role == "officer"
+            else ""
+        ),
     }
 
 
@@ -336,7 +357,7 @@ def serialize_event(row: sqlite3.Row, current_user_id: int | None = None) -> dic
 def get_officers() -> list[dict[str, Any]]:
     rows = get_db().execute(
         """
-        SELECT id, name, major, bio
+        SELECT id, name, major, bio, position
         FROM users
         WHERE role = 'officer'
         ORDER BY name COLLATE NOCASE ASC
@@ -349,7 +370,7 @@ def get_officers() -> list[dict[str, Any]]:
             {
                 "id": row["id"],
                 "name": row["name"],
-                "role": "Officer",
+                "role": row["position"] or "Officer",
                 "major": row["major"],
                 "bio": row["bio"] or "Officer profile ready for customization.",
                 "initials": initials,
@@ -422,9 +443,9 @@ def signup():
             """
             INSERT INTO users (
               name, email, password_hash, major, year, role,
-              eligible_for_leaderboard, bio, created_at
+              position, eligible_for_leaderboard, bio, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 values["name"],
@@ -433,6 +454,7 @@ def signup():
                 values["major"],
                 values["year"],
                 values["role"],
+                values["position"],
                 values["eligible_for_leaderboard"],
                 values["bio"],
                 utc_now(),
@@ -483,14 +505,23 @@ def update_profile(user: sqlite3.Row):
     name = str(payload.get("name", "")).strip()
     major = str(payload.get("major", "")).strip()
     year = str(payload.get("year", "")).strip()
+    position = str(payload.get("position", "")).strip()
+    bio = str(payload.get("bio", "")).strip()
 
     if not all([name, major, year]) or year not in YEAR_OPTIONS:
         return jsonify({"error": "Please provide a valid name, major, and year."}), 400
 
     db = get_db()
     db.execute(
-        "UPDATE users SET name = ?, major = ?, year = ? WHERE id = ?",
-        (name, major, year, user["id"]),
+        "UPDATE users SET name = ?, major = ?, year = ?, position = ?, bio = ? WHERE id = ?",
+        (
+            name,
+            major,
+            year,
+            position if user["role"] == "officer" else "",
+            bio if user["role"] == "officer" else "",
+            user["id"],
+        ),
     )
     db.commit()
     updated_user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
@@ -720,7 +751,10 @@ def promote_member(_: sqlite3.Row):
     db.execute(
         """
         UPDATE users
-        SET role = 'officer', eligible_for_leaderboard = 0, bio = COALESCE(NULLIF(bio, ''), 'Officer profile ready for customization.')
+        SET role = 'officer',
+            eligible_for_leaderboard = 0,
+            position = COALESCE(NULLIF(position, ''), 'Officer'),
+            bio = COALESCE(NULLIF(bio, ''), 'Officer profile ready for customization.')
         WHERE email = ?
         """,
         (email,),

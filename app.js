@@ -45,6 +45,10 @@ const profileNameInput = document.getElementById("profileNameInput");
 const profileMajorInput = document.getElementById("profileMajorInput");
 const profileYearInput = document.getElementById("profileYearInput");
 const profileStarsInput = document.getElementById("profileStarsInput");
+const profilePositionField = document.getElementById("profilePositionField");
+const profilePositionInput = document.getElementById("profilePositionInput");
+const profileBioField = document.getElementById("profileBioField");
+const profileBioInput = document.getElementById("profileBioInput");
 const profileEmail = document.getElementById("profileEmail");
 const profileRole = document.getElementById("profileRole");
 const profileEligibility = document.getElementById("profileEligibility");
@@ -184,7 +188,9 @@ signupForm.addEventListener("submit", async (event) => {
         year: String(formData.get("year") || ""),
         password: String(formData.get("password") || ""),
         role: String(formData.get("role") || "member"),
-        officerInviteCode: String(formData.get("officerInviteCode") || "").trim()
+        officerInviteCode: String(formData.get("officerInviteCode") || "").trim(),
+        position: String(formData.get("position") || "").trim(),
+        bio: String(formData.get("bio") || "").trim()
       })
     });
     signupForm.reset();
@@ -205,7 +211,9 @@ profileForm.addEventListener("submit", async (event) => {
       body: JSON.stringify({
         name: profileNameInput.value.trim(),
         major: profileMajorInput.value.trim(),
-        year: profileYearInput.value
+        year: profileYearInput.value,
+        position: profilePositionInput ? profilePositionInput.value.trim() : "",
+        bio: profileBioInput ? profileBioInput.value.trim() : ""
       })
     });
     profileNote.textContent = "Your profile has been updated.";
@@ -341,10 +349,10 @@ function renderEventCard(eventRecord) {
   const card = document.createElement("article");
   card.className = `event-card ${eventRecord.status === "completed" ? "completed-card" : ""}`;
   card.innerHTML = `
-    <span class="event-type-badge">${eventRecord.type} · ${eventRecord.stars} stars</span>
+    <span class="event-type-badge">${eventRecord.type} - ${eventRecord.stars} stars</span>
     <span class="event-status-badge">${eventRecord.status === "completed" ? "Completed" : "Upcoming"}</span>
     <h3>${eventRecord.title}</h3>
-    <time>${eventRecord.date} · ${eventRecord.time}</time>
+    <time>${eventRecord.date} - ${eventRecord.time}</time>
     <div class="event-meta">
       <span>${eventRecord.location}</span>
     </div>
@@ -467,7 +475,7 @@ function renderLeaderboard() {
       <div class="rank-badge">${index + 1}</div>
       <div>
         <div class="leaderboard-name">${member.name}</div>
-        <span>${member.major} · ${member.year}</span>
+        <span>${member.major} - ${member.year}</span>
       </div>
       <div class="leaderboard-stars">${member.stars}</div>
     `;
@@ -498,8 +506,8 @@ function renderAdmin() {
     row.className = "admin-event-row";
     row.innerHTML = `
       <strong>${eventRecord.title}</strong>
-      <div class="admin-event-meta">${eventRecord.status} · ${eventRecord.type} · ${eventRecord.date} · ${eventRecord.time}</div>
-      <div class="admin-event-meta">${eventRecord.location} · ${eventRecord.stars} stars · ${eventRecord.attendanceCount} attended</div>
+      <div class="admin-event-meta">${eventRecord.status} - ${eventRecord.type} - ${eventRecord.date} - ${eventRecord.time}</div>
+      <div class="admin-event-meta">${eventRecord.location} - ${eventRecord.stars} stars - ${eventRecord.attendanceCount} attended</div>
       <div class="admin-event-actions">
         <button class="button button-ghost" type="button">${eventRecord.checkinActive ? "Check-in Live" : "Start Check-in"}</button>
         <button class="button button-secondary" type="button">Copy Link</button>
@@ -550,6 +558,10 @@ function renderHome() {
   profileMajorInput.value = user.major;
   profileYearInput.value = YEAR_OPTIONS.includes(user.year) ? user.year : YEAR_OPTIONS[0];
   profileStarsInput.value = `${user.stars} stars`;
+  profilePositionInput.value = user.position || "";
+  profileBioInput.value = user.bio || "";
+  profilePositionField.classList.toggle("hidden", user.role !== "officer");
+  profileBioField.classList.toggle("hidden", user.role !== "officer");
   profileEmail.textContent = user.email;
   profileRole.textContent = user.role === "officer" ? "Officer" : "Member";
   profileEligibility.textContent = user.eligibleForLeaderboard ? "Eligible" : "Officer excluded from prizes";
@@ -557,7 +569,7 @@ function renderHome() {
   if (nextEvent) {
     homeNextEvent.innerHTML = `
       <strong>${nextEvent.title}</strong>
-      <p>${nextEvent.date} · ${nextEvent.time}</p>
+      <p>${nextEvent.date} - ${nextEvent.time}</p>
       <p>${nextEvent.location}</p>
       <p>${nextEvent.type} event worth ${nextEvent.stars} stars after check-in.</p>
     `;
