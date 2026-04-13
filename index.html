@@ -236,6 +236,21 @@
             <section class="card">
               <div class="section-heading">
                 <div>
+                  <p class="eyebrow">Live Attendance</p>
+                  <h3>Enter today's event code</h3>
+                </div>
+              </div>
+              <div id="liveCheckinPanel" class="next-event"></div>
+              <form id="liveCheckinForm" class="admin-checkin-row hidden">
+                <input id="liveCheckinCodeInput" name="attendanceCode" type="text" placeholder="Enter the live code" autocomplete="off">
+                <button class="button button-primary" type="submit">Check In</button>
+              </form>
+              <p class="form-note" id="liveCheckinNote" aria-live="polite"></p>
+            </section>
+
+            <section class="card">
+              <div class="section-heading">
+                <div>
                   <p class="eyebrow">Next Up</p>
                   <h3>Event reminder</h3>
                 </div>
@@ -369,8 +384,10 @@
               <h3>Current events</h3>
               <div id="adminEventList" class="admin-event-list"></div>
               <div class="demo-note hidden" id="adminCheckinLinkBox">
-                <strong>Live check-in link:</strong>
-                <a id="adminCheckinLink" href="#" target="_blank" rel="noreferrer"></a>
+                <strong>Live attendance is open.</strong>
+                <div>Members can scan the same SASE QR and enter this code:</div>
+                <div id="adminAttendanceCode" class="attendance-code"></div>
+                <div id="adminAttendanceEvent"></div>
               </div>
             </section>
           </div>

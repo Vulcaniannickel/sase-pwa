@@ -5,11 +5,12 @@ let appState = {
   events: [],
   officers: [],
   leaderboard: [],
+  liveCheckinEvent: null,
+  adminLiveCheckinEvent: null,
   checkinMessage: ""
 };
 let deferredPrompt;
 let pendingCheckinToken = new URLSearchParams(window.location.search).get("checkin") || "";
-let activeCheckinUrl = "";
 
 const authScreen = document.getElementById("authScreen");
 const dashboard = document.getElementById("dashboard");
@@ -22,6 +23,10 @@ const loginNote = document.getElementById("loginNote");
 const signupNote = document.getElementById("signupNote");
 const profileForm = document.getElementById("profileForm");
 const profileNote = document.getElementById("profileNote");
+const liveCheckinForm = document.getElementById("liveCheckinForm");
+const liveCheckinCodeInput = document.getElementById("liveCheckinCodeInput");
+const liveCheckinPanel = document.getElementById("liveCheckinPanel");
+const liveCheckinNote = document.getElementById("liveCheckinNote");
 const adminEventForm = document.getElementById("adminEventForm");
 const adminNote = document.getElementById("adminNote");
 const upcomingEventsGrid = document.getElementById("upcomingEventsGrid");
@@ -31,7 +36,8 @@ const leaderboardList = document.getElementById("leaderboardList");
 const podium = document.getElementById("podium");
 const adminEventList = document.getElementById("adminEventList");
 const adminCheckinLinkBox = document.getElementById("adminCheckinLinkBox");
-const adminCheckinLink = document.getElementById("adminCheckinLink");
+const adminAttendanceCode = document.getElementById("adminAttendanceCode");
+const adminAttendanceEvent = document.getElementById("adminAttendanceEvent");
 const installButton = document.getElementById("installButton");
 const adminTabButton = document.getElementById("adminTabButton");
 const adminView = document.getElementById("adminView");
@@ -223,6 +229,26 @@ profileForm.addEventListener("submit", async (event) => {
   }
 });
 
+liveCheckinForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  liveCheckinNote.textContent = "";
+
+  try {
+    appState = await apiFetch("/api/live-checkin", {
+      method: "POST",
+      body: JSON.stringify({
+        attendanceCode: liveCheckinCodeInput.value.trim().toUpperCase()
+      })
+    });
+    liveCheckinCodeInput.value = "";
+    liveCheckinNote.textContent = appState.checkinMessage || "Attendance confirmed.";
+    renderDashboard();
+    setBanner(appState.checkinMessage || "Attendance confirmed.");
+  } catch (error) {
+    liveCheckinNote.textContent = error.message;
+  }
+});
+
 adminEventForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   adminNote.textContent = "";
@@ -252,10 +278,18 @@ adminEventForm.addEventListener("submit", async (event) => {
 
 logoutButton.addEventListener("click", async () => {
   await apiFetch("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
-  appState = { user: null, events: [], officers: [], leaderboard: [], checkinMessage: "" };
+  appState = {
+    user: null,
+    events: [],
+    officers: [],
+    leaderboard: [],
+    liveCheckinEvent: null,
+    adminLiveCheckinEvent: null,
+    checkinMessage: ""
+  };
   profileNote.textContent = "";
   adminNote.textContent = "";
-  activeCheckinUrl = "";
+  liveCheckinNote.textContent = "";
   renderApp();
   await loadCheckinPrompt();
 });
@@ -309,13 +343,11 @@ async function deleteEvent(eventId) {
 
 async function startCheckin(eventId) {
   try {
-    const data = await apiFetch(`/api/admin/events/${eventId}/checkin/start`, {
+    appState = await apiFetch(`/api/admin/events/${eventId}/checkin/start`, {
       method: "POST",
       body: JSON.stringify({})
     });
-    appState = data;
-    activeCheckinUrl = `${window.location.origin}${data.checkinLink}`;
-    adminNote.textContent = "Check-in is live for this event.";
+    adminNote.textContent = "Live attendance started. Members can scan the permanent SASE QR and enter the code shown here.";
     renderDashboard();
   } catch (error) {
     adminNote.textContent = error.message;
@@ -328,20 +360,10 @@ async function stopCheckin(eventId) {
       method: "POST",
       body: JSON.stringify({})
     });
-    activeCheckinUrl = "";
-    adminNote.textContent = "Check-in stopped for this event.";
+    adminNote.textContent = "Live attendance stopped for this event.";
     renderDashboard();
   } catch (error) {
     adminNote.textContent = error.message;
-  }
-}
-
-async function copyCheckinLink(url) {
-  try {
-    await navigator.clipboard.writeText(url);
-    adminNote.textContent = "Check-in link copied. Use it to generate your event QR code.";
-  } catch (error) {
-    adminNote.textContent = "Copy failed. You can still open the link below manually.";
   }
 }
 
@@ -368,8 +390,10 @@ function renderEventCard(eventRecord) {
   info.className = "muted-text";
   if (eventRecord.isAttended) {
     info.textContent = `Attendance confirmed. ${eventRecord.stars} stars earned.`;
+  } else if (appState.liveCheckinEvent && appState.liveCheckinEvent.id === eventRecord.id) {
+    info.textContent = "This event is live now. Scan the club QR, log in, and enter the attendance code shown at the event.";
   } else if (eventRecord.status !== "completed") {
-    info.textContent = "RSVP saves your spot. Stars are awarded only after you scan the live event check-in QR code.";
+    info.textContent = "RSVP saves your spot. Stars are awarded only after you attend and enter the live event code.";
   } else {
     info.textContent = "This event is completed. Stars are only awarded to members who checked in during attendance.";
   }
@@ -487,18 +511,21 @@ function renderAdmin() {
   const isOfficer = appState.user?.role === "officer";
   adminTabButton.classList.toggle("hidden", !isOfficer);
   adminView.classList.toggle("hidden", !isOfficer);
-  adminCheckinLinkBox.classList.toggle("hidden", !activeCheckinUrl);
-  if (activeCheckinUrl) {
-    adminCheckinLink.href = activeCheckinUrl;
-    adminCheckinLink.textContent = activeCheckinUrl;
-  }
 
   if (!isOfficer) {
+    adminCheckinLinkBox.classList.add("hidden");
     if (document.querySelector(".view.active")?.dataset.view === "admin") {
       showTab("home");
     }
     return;
   }
+
+  const activeEvent = appState.adminLiveCheckinEvent;
+  adminCheckinLinkBox.classList.toggle("hidden", !activeEvent);
+  adminAttendanceCode.textContent = activeEvent?.attendanceCode || "";
+  adminAttendanceEvent.textContent = activeEvent
+    ? `${activeEvent.title} - ${activeEvent.date} - ${activeEvent.time}`
+    : "";
 
   adminEventList.innerHTML = "";
   appState.events.forEach((eventRecord) => {
@@ -509,30 +536,42 @@ function renderAdmin() {
       <div class="admin-event-meta">${eventRecord.status} - ${eventRecord.type} - ${eventRecord.date} - ${eventRecord.time}</div>
       <div class="admin-event-meta">${eventRecord.location} - ${eventRecord.stars} stars - ${eventRecord.attendanceCount} attended</div>
       <div class="admin-event-actions">
-        <button class="button button-ghost" type="button">${eventRecord.checkinActive ? "Check-in Live" : "Start Check-in"}</button>
-        <button class="button button-secondary" type="button">Copy Link</button>
-        <button class="button button-secondary" type="button">Stop Check-in</button>
+        <button class="button button-ghost" type="button">${eventRecord.checkinActive ? "Attendance Live" : "Start Attendance"}</button>
+        <button class="button button-secondary" type="button">Stop Attendance</button>
         <button class="button button-danger" type="button">Delete Event</button>
       </div>
     `;
     const buttons = row.querySelectorAll("button");
     buttons[0].addEventListener("click", () => startCheckin(eventRecord.id));
-    buttons[1].addEventListener("click", async () => {
-      const url = `${window.location.origin}/?checkin=${eventRecord.checkinToken}`;
-      if (!eventRecord.checkinToken) {
-        await startCheckin(eventRecord.id);
-        if (activeCheckinUrl) {
-          await copyCheckinLink(activeCheckinUrl);
-        }
-      } else {
-        await copyCheckinLink(url);
-      }
-    });
-    buttons[2].addEventListener("click", () => stopCheckin(eventRecord.id));
-    buttons[3].addEventListener("click", () => deleteEvent(eventRecord.id));
-    buttons[2].disabled = !eventRecord.checkinActive;
+    buttons[1].addEventListener("click", () => stopCheckin(eventRecord.id));
+    buttons[2].addEventListener("click", () => deleteEvent(eventRecord.id));
+    buttons[1].disabled = !eventRecord.checkinActive;
     adminEventList.appendChild(row);
   });
+}
+
+function renderLiveCheckin() {
+  const liveEvent = appState.liveCheckinEvent;
+  liveCheckinNote.textContent = "";
+
+  if (!liveEvent) {
+    liveCheckinPanel.innerHTML = "<strong>No live attendance right now.</strong><p>When an officer starts event attendance, enter the code shown at the event here.</p>";
+    liveCheckinForm.classList.add("hidden");
+    return;
+  }
+
+  liveCheckinPanel.innerHTML = `
+    <strong>${liveEvent.title}</strong>
+    <p>${liveEvent.date} - ${liveEvent.time}</p>
+    <p>${liveEvent.location}</p>
+    <p>Enter the attendance code shown by an officer to earn ${liveEvent.stars} stars.</p>
+  `;
+  liveCheckinForm.classList.remove("hidden");
+
+  const liveEventRecord = appState.events.find((eventRecord) => eventRecord.id === liveEvent.id);
+  if (liveEventRecord?.isAttended) {
+    liveCheckinNote.textContent = `You are already checked in for ${liveEvent.title}.`;
+  }
 }
 
 function renderHome() {
@@ -549,7 +588,7 @@ function renderHome() {
   welcomeMessage.textContent = `Hello, ${user.name.split(" ")[0]}!`;
   welcomeSubtext.textContent = latestEvent
     ? `Welcome back. Your latest attended event earned ${latestEvent.stars} stars from ${latestEvent.title}.`
-    : "Welcome back. RSVP to events, then scan the live event QR code when you attend to earn SASE stars.";
+    : "Welcome back. RSVP to events, then scan the SASE QR at the event and enter the live attendance code to earn stars.";
 
   profileStars.textContent = `${user.stars}`;
   profileInterestedCount.textContent = `${appState.events.filter((eventRecord) => eventRecord.isInterested).length}`;
@@ -571,11 +610,13 @@ function renderHome() {
       <strong>${nextEvent.title}</strong>
       <p>${nextEvent.date} - ${nextEvent.time}</p>
       <p>${nextEvent.location}</p>
-      <p>${nextEvent.type} event worth ${nextEvent.stars} stars after check-in.</p>
+      <p>${nextEvent.type} event worth ${nextEvent.stars} stars after live attendance check-in.</p>
     `;
   } else {
     homeNextEvent.innerHTML = "<strong>No upcoming events yet.</strong>";
   }
+
+  renderLiveCheckin();
 }
 
 function renderDashboard() {

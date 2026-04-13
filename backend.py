@@ -84,6 +84,7 @@ def init_db() -> None:
       description TEXT NOT NULL,
       checkin_token TEXT,
       checkin_active INTEGER NOT NULL DEFAULT 0,
+      attendance_code TEXT,
       created_by INTEGER,
       created_at TEXT NOT NULL,
       FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
@@ -143,6 +144,38 @@ def ensure_event_columns(cursor: sqlite3.Cursor) -> None:
         cursor.execute("ALTER TABLE events ADD COLUMN checkin_token TEXT")
     if "checkin_active" not in columns:
         cursor.execute("ALTER TABLE events ADD COLUMN checkin_active INTEGER NOT NULL DEFAULT 0")
+    if "attendance_code" not in columns:
+        cursor.execute("ALTER TABLE events ADD COLUMN attendance_code TEXT")
+
+
+def get_live_checkin_event() -> sqlite3.Row | None:
+    return get_db().execute(
+        """
+        SELECT *
+        FROM events
+        WHERE checkin_active = 1
+        ORDER BY id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+
+
+def build_live_checkin_event(row: sqlite3.Row | None, include_code: bool = False) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    payload = {
+        "id": row["id"],
+        "title": row["title"],
+        "type": row["type"],
+        "date": row["date"],
+        "time": row["time"],
+        "location": row["location"],
+        "stars": row["stars"],
+        "status": row["status"],
+    }
+    if include_code:
+        payload["attendanceCode"] = row["attendance_code"] or ""
+    return payload
 
 
 def seed_events_if_needed(db: sqlite3.Connection) -> None:
@@ -399,6 +432,12 @@ def get_dashboard_payload(user: sqlite3.Row | None) -> dict[str, Any]:
         "user": row_to_user(user) if user else None,
         "events": events,
         "officers": get_officers(),
+        "liveCheckinEvent": build_live_checkin_event(get_live_checkin_event()),
+        "adminLiveCheckinEvent": (
+            build_live_checkin_event(get_live_checkin_event(), include_code=True)
+            if user and user["role"] == "officer"
+            else None
+        ),
         "leaderboard": [
             {
                 "name": row["name"],
@@ -649,6 +688,48 @@ def claim_checkin(user: sqlite3.Row, token: str):
     return jsonify(payload)
 
 
+@app.post("/api/live-checkin")
+@login_required
+def claim_live_checkin(user: sqlite3.Row):
+    payload = request.get_json(silent=True) or {}
+    submitted_code = str(payload.get("attendanceCode", "")).strip().upper()
+    if not submitted_code:
+        return jsonify({"error": "Enter the live attendance code for the event."}), 400
+
+    db = get_db()
+    event_row = get_live_checkin_event()
+    if event_row is None:
+        return jsonify({"error": "There is no live event check-in right now."}), 400
+    if event_row["attendance_code"] != submitted_code:
+        return jsonify({"error": "That attendance code is not correct."}), 400
+
+    already_attended = db.execute(
+        "SELECT 1 FROM event_attendance WHERE user_id = ? AND event_id = ?",
+        (user["id"], event_row["id"]),
+    ).fetchone()
+    if already_attended:
+        refreshed_user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+        data = get_dashboard_payload(refreshed_user)
+        data["checkinMessage"] = f"You were already checked in for {event_row['title']}."
+        return jsonify(data)
+
+    db.execute(
+        "INSERT INTO event_attendance (user_id, event_id, created_at) VALUES (?, ?, ?)",
+        (user["id"], event_row["id"], utc_now()),
+    )
+    db.execute(
+        "UPDATE users SET stars = stars + ? WHERE id = ?",
+        (event_row["stars"], user["id"]),
+    )
+    db.commit()
+    refreshed_user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+    data = get_dashboard_payload(refreshed_user)
+    data["checkinMessage"] = (
+        f"Attendance confirmed for {event_row['title']}. You earned {event_row['stars']} stars."
+    )
+    return jsonify(data)
+
+
 @app.post("/api/admin/events")
 @officer_required
 def create_event(_: sqlite3.Row):
@@ -691,9 +772,11 @@ def start_checkin(_: sqlite3.Row, event_id: int):
         return jsonify({"error": "Event not found."}), 404
 
     token = event_row["checkin_token"] or secrets.token_urlsafe(16)
+    attendance_code = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(6))
+    db.execute("UPDATE events SET checkin_active = 0 WHERE id != ?", (event_id,))
     db.execute(
-        "UPDATE events SET checkin_token = ?, checkin_active = 1 WHERE id = ?",
-        (token, event_id),
+        "UPDATE events SET checkin_token = ?, checkin_active = 1, attendance_code = ? WHERE id = ?",
+        (token, attendance_code, event_id),
     )
     db.commit()
     payload = get_dashboard_payload(get_current_user_row())
@@ -710,7 +793,7 @@ def stop_checkin(_: sqlite3.Row, event_id: int):
         return jsonify({"error": "Event not found."}), 404
 
     db.execute(
-        "UPDATE events SET checkin_active = 0 WHERE id = ?",
+        "UPDATE events SET checkin_active = 0, attendance_code = NULL WHERE id = ?",
         (event_id,),
     )
     db.commit()
