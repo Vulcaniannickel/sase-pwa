@@ -16,6 +16,7 @@ This project is now a real shared full-stack club app.
 - events
 - RSVP and interest counts
 - attendance check-in
+- push notification subscriptions
 - stars
 - leaderboard
 - officer-only event management
@@ -52,8 +53,9 @@ Basic Render flow:
 1. Push this project to a GitHub repository
 2. Create a new Render web service from that repo
 3. Set `OFFICER_INVITE_CODE` in Render
-4. Let Render build and deploy the app
-5. Use the public Render URL for your QR codes
+4. Set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_CLAIMS_SUBJECT` in Render if you want push notifications
+5. Let Render build and deploy the app
+6. Use the public Render URL for your QR codes
 
 ## Can you still edit it after it is public?
 
@@ -96,22 +98,41 @@ python backend.py
 
 1. Log in as an officer
 2. Open the `Admin` tab
-3. For the event you want, click `Start Check-in`
-4. Copy the generated check-in link
-5. Turn that link into a QR code
-6. Show that QR code at the event
-7. Members scan it, log in if needed, and their attendance is recorded
-8. Click `Stop Check-in` when the event is over
+3. For the event you want, click `Start Attendance`
+4. The app generates a live attendance code for that event
+5. Show the same permanent SASE QR code to the room
+6. Show the live attendance code on your laptop/projector
+7. Members scan the SASE QR, log in, and enter the live code
+8. Click `Stop Attendance` when the event is over
 
-The QR code should point to a public URL later, like:
+## Push notifications
+
+Members can enable notifications from the app after logging in. Officers can then send:
+
+- reminders
+- location changes
+- general updates
+- attendance-live alerts
+
+Notifications can be sent to:
+
+- members who RSVP'd
+- members who marked Interested
+- both groups together
+
+To make push notifications work in production, set these environment variables:
 
 ```text
-https://your-domain.com/?checkin=TOKEN
+VAPID_PUBLIC_KEY
+VAPID_PRIVATE_KEY
+VAPID_CLAIMS_SUBJECT
 ```
+
+You can generate a VAPID keypair with a web-push tool or an online generator, then copy those values into Render.
 
 ## Notes before public launch
 
 - SQLite is fine for early real use and testing, but for a larger public rollout you may want Postgres later.
 - Do not commit your live database file.
-- If you deploy publicly, set a real `SECRET_KEY` and `OFFICER_INVITE_CODE`.
+- If you deploy publicly, set a real `SECRET_KEY`, `OFFICER_INVITE_CODE`, and VAPID keys for notifications.
 - The next strong upgrade would be attendance windows, expiring check-in tokens, and officer-only manual attendance overrides.

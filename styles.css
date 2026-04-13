@@ -336,6 +336,10 @@ a {
   word-break: break-all;
 }
 
+#notificationSupportNote {
+  margin-top: 1rem;
+}
+
 .dashboard {
   display: grid;
   gap: 1rem;

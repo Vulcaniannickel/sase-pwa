@@ -7,6 +7,10 @@ let appState = {
   leaderboard: [],
   liveCheckinEvent: null,
   adminLiveCheckinEvent: null,
+  notifications: {
+    supported: false,
+    publicKey: ""
+  },
   checkinMessage: ""
 };
 let deferredPrompt;
@@ -29,6 +33,12 @@ const liveCheckinPanel = document.getElementById("liveCheckinPanel");
 const liveCheckinNote = document.getElementById("liveCheckinNote");
 const adminEventForm = document.getElementById("adminEventForm");
 const adminNote = document.getElementById("adminNote");
+const adminNotificationForm = document.getElementById("adminNotificationForm");
+const adminNotificationNote = document.getElementById("adminNotificationNote");
+const notificationEventId = document.getElementById("notificationEventId");
+const enableNotificationsButton = document.getElementById("enableNotificationsButton");
+const notificationNote = document.getElementById("notificationNote");
+const notificationSupportNote = document.getElementById("notificationSupportNote");
 const upcomingEventsGrid = document.getElementById("upcomingEventsGrid");
 const completedEventsGrid = document.getElementById("completedEventsGrid");
 const officerGrid = document.getElementById("officerGrid");
@@ -109,6 +119,17 @@ function showAuthView(target) {
   signupNote.textContent = "";
 }
 
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let index = 0; index < rawData.length; index += 1) {
+    outputArray[index] = rawData.charCodeAt(index);
+  }
+  return outputArray;
+}
+
 async function loadCheckinPrompt() {
   if (!pendingCheckinToken || appState.user) {
     checkinPrompt.classList.add("hidden");
@@ -145,6 +166,76 @@ async function claimPendingCheckin() {
   }
 }
 
+async function syncNotificationButtonState() {
+  const supported = appState.notifications?.supported && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  enableNotificationsButton.classList.toggle("hidden", !appState.user || !supported);
+
+  if (!appState.user) {
+    notificationSupportNote.textContent = "Notifications: log in and install the PWA to enable event reminders and updates.";
+    notificationNote.textContent = "";
+    return;
+  }
+
+  if (!supported) {
+    notificationSupportNote.textContent = "Notifications: this browser or deployment does not have push notifications ready yet.";
+    notificationNote.textContent = "";
+    return;
+  }
+
+  notificationSupportNote.textContent = "Notifications: install the PWA and allow notifications to get event reminders, location changes, attendance alerts, and updates.";
+
+  const permission = Notification.permission;
+  if (permission === "granted") {
+    enableNotificationsButton.textContent = "Notifications Enabled";
+    enableNotificationsButton.disabled = true;
+    notificationNote.textContent = "This device is ready to receive SASE notifications.";
+  } else if (permission === "denied") {
+    enableNotificationsButton.textContent = "Notifications Blocked";
+    enableNotificationsButton.disabled = true;
+    notificationNote.textContent = "Notifications are blocked in this browser. You can re-enable them in browser settings.";
+  } else {
+    enableNotificationsButton.textContent = "Enable Notifications";
+    enableNotificationsButton.disabled = false;
+    notificationNote.textContent = "Allow notifications so officers can send you event reminders and updates.";
+  }
+}
+
+async function enableNotifications() {
+  const supported = appState.notifications?.supported && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  if (!supported) {
+    notificationNote.textContent = "Push notifications are not available here yet.";
+    return;
+  }
+
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      notificationNote.textContent = "Notification permission was not granted.";
+      await syncNotificationButtonState();
+      return;
+    }
+
+    const registration = await navigator.serviceWorker.ready;
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(appState.notifications.publicKey)
+      });
+    }
+
+    await apiFetch("/api/notifications/subscribe", {
+      method: "POST",
+      body: JSON.stringify(subscription.toJSON())
+    });
+    notificationNote.textContent = "Notifications enabled for this device.";
+  } catch (error) {
+    notificationNote.textContent = error.message;
+  }
+
+  await syncNotificationButtonState();
+}
+
 authTabButtons.forEach((button) => {
   button.addEventListener("click", () => showAuthView(button.dataset.authView));
 });
@@ -156,6 +247,10 @@ navButtons.forEach((button) => {
     }
     showTab(button.dataset.tabTarget);
   });
+});
+
+enableNotificationsButton.addEventListener("click", async () => {
+  await enableNotifications();
 });
 
 loginForm.addEventListener("submit", async (event) => {
@@ -174,6 +269,7 @@ loginForm.addEventListener("submit", async (event) => {
     loginForm.reset();
     await claimPendingCheckin();
     renderApp();
+    await syncNotificationButtonState();
   } catch (error) {
     loginNote.textContent = error.message;
   }
@@ -202,6 +298,7 @@ signupForm.addEventListener("submit", async (event) => {
     signupForm.reset();
     await claimPendingCheckin();
     renderApp();
+    await syncNotificationButtonState();
   } catch (error) {
     signupNote.textContent = error.message;
   }
@@ -276,6 +373,30 @@ adminEventForm.addEventListener("submit", async (event) => {
   }
 });
 
+adminNotificationForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  adminNotificationNote.textContent = "";
+  const formData = new FormData(adminNotificationForm);
+  const eventId = String(formData.get("eventId") || "");
+
+  try {
+    const data = await apiFetch(`/api/admin/events/${eventId}/notify`, {
+      method: "POST",
+      body: JSON.stringify({
+        type: String(formData.get("type") || "reminder"),
+        audience: String(formData.get("audience") || "rsvp"),
+        message: String(formData.get("message") || "").trim()
+      })
+    });
+    appState = data;
+    const summary = data.notificationSummary;
+    adminNotificationNote.textContent = `Notification sent to ${summary.sent} members${summary.failed ? `, with ${summary.failed} failed device(s)` : ""}.`;
+    renderDashboard();
+  } catch (error) {
+    adminNotificationNote.textContent = error.message;
+  }
+});
+
 logoutButton.addEventListener("click", async () => {
   await apiFetch("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
   appState = {
@@ -285,13 +406,16 @@ logoutButton.addEventListener("click", async () => {
     leaderboard: [],
     liveCheckinEvent: null,
     adminLiveCheckinEvent: null,
+    notifications: { supported: false, publicKey: "" },
     checkinMessage: ""
   };
   profileNote.textContent = "";
   adminNote.textContent = "";
+  adminNotificationNote.textContent = "";
   liveCheckinNote.textContent = "";
   renderApp();
   await loadCheckinPrompt();
+  await syncNotificationButtonState();
 });
 
 function showTab(viewName) {
@@ -507,10 +631,34 @@ function renderLeaderboard() {
   });
 }
 
+function renderNotificationEventOptions() {
+  if (!notificationEventId) {
+    return;
+  }
+
+  const events = appState.events.filter((eventRecord) => eventRecord.status !== "completed");
+  notificationEventId.innerHTML = "";
+  if (!events.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No upcoming events";
+    notificationEventId.appendChild(option);
+    return;
+  }
+
+  events.forEach((eventRecord) => {
+    const option = document.createElement("option");
+    option.value = `${eventRecord.id}`;
+    option.textContent = `${eventRecord.title} - ${eventRecord.date}`;
+    notificationEventId.appendChild(option);
+  });
+}
+
 function renderAdmin() {
   const isOfficer = appState.user?.role === "officer";
   adminTabButton.classList.toggle("hidden", !isOfficer);
   adminView.classList.toggle("hidden", !isOfficer);
+  adminNotificationForm.classList.toggle("hidden", !isOfficer || !appState.notifications?.supported);
 
   if (!isOfficer) {
     adminCheckinLinkBox.classList.add("hidden");
@@ -519,6 +667,8 @@ function renderAdmin() {
     }
     return;
   }
+
+  renderNotificationEventOptions();
 
   const activeEvent = appState.adminLiveCheckinEvent;
   adminCheckinLinkBox.classList.toggle("hidden", !activeEvent);
@@ -683,6 +833,7 @@ apiFetch("/api/bootstrap")
       await claimPendingCheckin();
       renderApp();
     }
+    await syncNotificationButtonState();
   })
   .catch((error) => {
     loginNote.textContent = error.message;

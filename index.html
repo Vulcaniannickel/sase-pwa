@@ -168,6 +168,13 @@
                   <strong id="profileRsvpCount">0</strong>
                 </article>
               </div>
+              <div class="demo-note" id="notificationSupportNote">
+                <strong>Notifications:</strong> install the PWA and allow notifications to get event reminders and updates.
+              </div>
+              <div class="hero-actions">
+                <button class="button button-secondary" id="enableNotificationsButton" type="button">Enable Notifications</button>
+              </div>
+              <p class="form-note" id="notificationNote" aria-live="polite"></p>
             </div>
 
             <aside class="hero-side card">
@@ -382,6 +389,35 @@
 
             <section class="card">
               <h3>Current events</h3>
+              <form id="adminNotificationForm" class="admin-form">
+                <label>
+                  Event
+                  <select id="notificationEventId" name="eventId" required></select>
+                </label>
+                <label>
+                  Notification type
+                  <select name="type" required>
+                    <option value="reminder">Reminder</option>
+                    <option value="location">Location Change</option>
+                    <option value="update">General Update</option>
+                    <option value="checkin">Attendance Live</option>
+                  </select>
+                </label>
+                <label>
+                  Send to
+                  <select name="audience" required>
+                    <option value="rsvp">RSVP'd Members</option>
+                    <option value="interested">Interested Members</option>
+                    <option value="both">Interested + RSVP'd</option>
+                  </select>
+                </label>
+                <label>
+                  Message
+                  <textarea name="message" rows="3" placeholder="Optional custom message. Leave blank to use the built-in template."></textarea>
+                </label>
+                <button class="button button-secondary" type="submit">Send Notification</button>
+                <p class="form-note" id="adminNotificationNote" aria-live="polite"></p>
+              </form>
               <div id="adminEventList" class="admin-event-list"></div>
               <div class="demo-note hidden" id="adminCheckinLinkBox">
                 <strong>Live attendance is open.</strong>

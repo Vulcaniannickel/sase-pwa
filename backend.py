@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import secrets
+import json
 from contextlib import closing
 from datetime import datetime, timezone
 from functools import wraps
@@ -12,11 +13,20 @@ from typing import Any
 from flask import Flask, g, jsonify, request, send_from_directory, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
+try:
+    from pywebpush import WebPushException, webpush
+except ImportError:  # pragma: no cover - optional until dependency is installed
+    WebPushException = Exception
+    webpush = None
+
 
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE_PATH = Path(os.environ.get("DATABASE_PATH", str(BASE_DIR / "sase_portal.db")))
 OFFICER_INVITE_CODE = os.environ.get("OFFICER_INVITE_CODE", "SASE-OFFICER")
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-me")
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
+VAPID_CLAIMS_SUBJECT = os.environ.get("VAPID_CLAIMS_SUBJECT", "mailto:ryankreger364@gmail.com")
 
 YEAR_OPTIONS = {
     "First Year",
@@ -116,6 +126,16 @@ def init_db() -> None:
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      endpoint TEXT NOT NULL UNIQUE,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
     """
     db = get_db()
     with closing(db.cursor()) as cursor:
@@ -176,6 +196,57 @@ def build_live_checkin_event(row: sqlite3.Row | None, include_code: bool = False
     if include_code:
         payload["attendanceCode"] = row["attendance_code"] or ""
     return payload
+
+
+def push_notifications_configured() -> bool:
+    return webpush is not None and bool(VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY)
+
+
+def build_push_payload(title: str, body: str, event_row: sqlite3.Row | None = None) -> str:
+    payload = {
+        "title": title,
+        "body": body,
+        "url": "/",
+    }
+    if event_row is not None:
+        payload["url"] = "/?event=" + str(event_row["id"])
+        payload["tag"] = f"event-{event_row['id']}"
+    return json.dumps(payload)
+
+
+def send_push_to_rows(rows: list[sqlite3.Row], payload: str) -> tuple[int, int]:
+    if not push_notifications_configured():
+        return 0, 0
+
+    db = get_db()
+    delivered = 0
+    failed = 0
+    for row in rows:
+        subscription = {
+            "endpoint": row["endpoint"],
+            "keys": {
+                "p256dh": row["p256dh"],
+                "auth": row["auth"],
+            },
+        }
+        try:
+            webpush(
+                subscription_info=subscription,
+                data=payload,
+                vapid_private_key=VAPID_PRIVATE_KEY,
+                vapid_claims={"sub": VAPID_CLAIMS_SUBJECT},
+            )
+            delivered += 1
+        except WebPushException as exc:
+            failed += 1
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            if status_code in {404, 410}:
+                db.execute(
+                    "DELETE FROM push_subscriptions WHERE endpoint = ?",
+                    (row["endpoint"],),
+                )
+    db.commit()
+    return delivered, failed
 
 
 def seed_events_if_needed(db: sqlite3.Connection) -> None:
@@ -438,6 +509,10 @@ def get_dashboard_payload(user: sqlite3.Row | None) -> dict[str, Any]:
             if user and user["role"] == "officer"
             else None
         ),
+        "notifications": {
+            "supported": push_notifications_configured(),
+            "publicKey": VAPID_PUBLIC_KEY,
+        },
         "leaderboard": [
             {
                 "name": row["name"],
@@ -730,6 +805,54 @@ def claim_live_checkin(user: sqlite3.Row):
     return jsonify(data)
 
 
+@app.post("/api/notifications/subscribe")
+@login_required
+def save_push_subscription(user: sqlite3.Row):
+    if not push_notifications_configured():
+        return jsonify({"error": "Push notifications are not configured yet."}), 400
+
+    payload = request.get_json(silent=True) or {}
+    endpoint = str(payload.get("endpoint", "")).strip()
+    keys = payload.get("keys") or {}
+    p256dh = str(keys.get("p256dh", "")).strip()
+    auth = str(keys.get("auth", "")).strip()
+
+    if not endpoint or not p256dh or not auth:
+        return jsonify({"error": "A valid push subscription is required."}), 400
+
+    db = get_db()
+    db.execute(
+        """
+        INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(endpoint) DO UPDATE SET
+          user_id = excluded.user_id,
+          p256dh = excluded.p256dh,
+          auth = excluded.auth
+        """,
+        (user["id"], endpoint, p256dh, auth, utc_now()),
+    )
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/notifications/unsubscribe")
+@login_required
+def delete_push_subscription(user: sqlite3.Row):
+    payload = request.get_json(silent=True) or {}
+    endpoint = str(payload.get("endpoint", "")).strip()
+    if not endpoint:
+        return jsonify({"error": "Subscription endpoint is required."}), 400
+
+    db = get_db()
+    db.execute(
+        "DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?",
+        (user["id"], endpoint),
+    )
+    db.commit()
+    return jsonify({"ok": True})
+
+
 @app.post("/api/admin/events")
 @officer_required
 def create_event(_: sqlite3.Row):
@@ -844,6 +967,81 @@ def promote_member(_: sqlite3.Row):
     )
     db.commit()
     return jsonify(get_dashboard_payload(get_current_user_row()))
+
+
+@app.post("/api/admin/events/<int:event_id>/notify")
+@officer_required
+def notify_event_members(_: sqlite3.Row, event_id: int):
+    if not push_notifications_configured():
+        return jsonify({"error": "Push notifications are not configured on the server yet."}), 400
+
+    payload = request.get_json(silent=True) or {}
+    notification_type = str(payload.get("type", "")).strip().lower()
+    audience = str(payload.get("audience", "rsvp")).strip().lower()
+    custom_message = str(payload.get("message", "")).strip()
+
+    if notification_type not in {"reminder", "location", "update", "checkin"}:
+        return jsonify({"error": "Choose a valid notification type."}), 400
+    if audience not in {"interested", "rsvp", "both"}:
+        return jsonify({"error": "Choose a valid audience."}), 400
+
+    db = get_db()
+    event_row = db.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+    if event_row is None:
+        return jsonify({"error": "Event not found."}), 404
+
+    audience_sql = []
+    params: list[Any] = [event_id]
+    if audience in {"interested", "both"}:
+        audience_sql.append(
+            """
+            SELECT DISTINCT ps.*
+            FROM push_subscriptions ps
+            INNER JOIN event_interest ei ON ei.user_id = ps.user_id
+            WHERE ei.event_id = ?
+            """
+        )
+    if audience in {"rsvp", "both"}:
+        audience_sql.append(
+            """
+            SELECT DISTINCT ps.*
+            FROM push_subscriptions ps
+            INNER JOIN event_rsvp er ON er.user_id = ps.user_id
+            WHERE er.event_id = ?
+            """
+        )
+        if audience == "both":
+            params.append(event_id)
+
+    query = " UNION ".join(audience_sql)
+    subscription_rows = db.execute(query, tuple(params)).fetchall()
+
+    title_map = {
+        "reminder": f"Reminder: {event_row['title']}",
+        "location": f"Location update: {event_row['title']}",
+        "update": f"Update: {event_row['title']}",
+        "checkin": f"Attendance live: {event_row['title']}",
+    }
+    default_message_map = {
+        "reminder": f"{event_row['title']} starts on {event_row['date']} at {event_row['time']} in {event_row['location']}.",
+        "location": f"The location for {event_row['title']} is now {event_row['location']}.",
+        "update": f"There is a new update for {event_row['title']}. Open the SASE app for details.",
+        "checkin": f"Attendance is now live for {event_row['title']}. Open the app and enter today's attendance code.",
+    }
+    body = custom_message or default_message_map[notification_type]
+    delivered, failed = send_push_to_rows(
+        subscription_rows,
+        build_push_payload(title_map[notification_type], body, event_row),
+    )
+
+    response = get_dashboard_payload(get_current_user_row())
+    response["notificationSummary"] = {
+        "sent": delivered,
+        "failed": failed,
+        "audience": audience,
+        "type": notification_type,
+    }
+    return jsonify(response)
 
 
 if __name__ == "__main__":
