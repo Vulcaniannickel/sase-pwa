@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+sase_portal.db
+test_sase_portal.db
+test_sase_portal.db-journal
+.env
+.vscode/

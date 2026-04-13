@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0d4d8c">
+  <meta
+    name="description"
+    content="SASE student club PWA for member profiles, event RSVP tracking, stars, officers, and admin event management."
+  >
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.svg">
+  <link rel="stylesheet" href="styles.css">
+  <title>SASE Student Portal</title>
+</head>
+<body>
+  <div class="background-orb orb-one"></div>
+  <div class="background-orb orb-two"></div>
+
+  <div class="app-shell">
+    <section class="auth-screen" id="authScreen">
+      <div class="auth-card auth-hero">
+        <div class="hero-image-panel">
+          <div class="hero-image-copy">
+            <p class="eyebrow">SASE Member Access</p>
+            <h1>Society of Asian Scientists and Engineers</h1>
+            <p>
+              Scan the club QR code, create your member profile once, and come back anytime to track
+              events, stars, and chapter updates.
+            </p>
+            <ul class="auth-highlights">
+              <li>Editable member profile for major and year</li>
+              <li>Upcoming and completed events kept separate</li>
+              <li>SASE stars leaderboard with officer filtering</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="auth-card auth-panel">
+        <div class="demo-note hidden" id="checkinPrompt">
+          <strong>Event check-in:</strong> log in or sign up to finish attendance for
+          <span id="checkinPromptEvent"></span>.
+        </div>
+        <div class="auth-tabs">
+          <button class="tab-button active" data-auth-view="login" type="button">Returning Member</button>
+          <button class="tab-button" data-auth-view="signup" type="button">New Member</button>
+        </div>
+
+        <form id="loginForm" class="auth-form">
+          <label>
+            Email
+            <input type="email" name="email" placeholder="member@campus.edu" required>
+          </label>
+          <label>
+            Password
+            <input type="password" name="password" placeholder="Enter your password" required>
+          </label>
+          <button class="button button-primary" type="submit">Log In</button>
+          <p class="form-note" id="loginNote" aria-live="polite"></p>
+        </form>
+
+        <form id="signupForm" class="auth-form hidden">
+          <label>
+            Full name
+            <input type="text" name="name" placeholder="Your full name" required>
+          </label>
+          <label>
+            Email
+            <input type="email" name="email" placeholder="member@campus.edu" required>
+          </label>
+          <label>
+            Major
+            <input type="text" name="major" placeholder="Computer Engineering" required>
+          </label>
+          <label>
+            Year
+            <select name="year" required>
+              <option value="">Select your year</option>
+              <option>First Year</option>
+              <option>Second Year</option>
+              <option>Third Year</option>
+              <option>Fourth Year</option>
+              <option>Graduate</option>
+            </select>
+          </label>
+          <label>
+            Password
+            <input type="password" name="password" placeholder="Create a password" required>
+          </label>
+          <label>
+            Role
+            <select name="role" required>
+              <option value="member">Member</option>
+              <option value="officer">Officer</option>
+            </select>
+          </label>
+          <label>
+            Officer invite code
+            <input type="text" name="officerInviteCode" placeholder="Required only for officer sign-up">
+          </label>
+          <button class="button button-primary" type="submit">Create Profile</button>
+          <p class="form-note" id="signupNote" aria-live="polite"></p>
+        </form>
+
+        <div class="demo-note">
+          <strong>Shared app:</strong> accounts, stars, and events now live in the shared backend database.
+        </div>
+      </div>
+    </section>
+
+    <div class="dashboard hidden" id="dashboard">
+      <div class="demo-note hidden" id="checkinStatusBanner"></div>
+      <header class="topbar">
+        <a class="brand" href="#" data-tab-target="home">
+          <span class="brand-mark">SA</span>
+          <span class="brand-text">
+            <strong>SASE Portal</strong>
+            <span>Professional Student Club</span>
+          </span>
+        </a>
+
+        <nav class="main-nav" aria-label="Primary">
+          <button class="nav-pill active" data-tab-target="home" type="button">Home</button>
+          <button class="nav-pill" data-tab-target="events" type="button">Events</button>
+          <button class="nav-pill" data-tab-target="leaderboard" type="button">Leaderboard</button>
+          <button class="nav-pill" data-tab-target="officers" type="button">Officers</button>
+          <button class="nav-pill hidden" data-tab-target="admin" id="adminTabButton" type="button">Admin</button>
+        </nav>
+
+        <div class="topbar-actions">
+          <button class="button button-secondary" id="installButton" hidden type="button">Install App</button>
+          <button class="button button-ghost" id="logoutButton" type="button">Log Out</button>
+        </div>
+      </header>
+
+      <main class="dashboard-main">
+        <section class="view active" id="homeView" data-view="home">
+          <div class="hero-panel">
+            <div class="hero-copy card">
+              <p class="eyebrow">Welcome back</p>
+              <h2 id="welcomeMessage">Hello!</h2>
+              <p id="welcomeSubtext" class="lead"></p>
+              <div class="hero-actions">
+                <button class="button button-primary" data-tab-target="events" type="button">Browse Events</button>
+                <button class="button button-secondary" data-tab-target="leaderboard" type="button">See Top SASE Stars</button>
+              </div>
+              <div class="stats-grid">
+                <article class="stat-card">
+                  <span>Total Stars</span>
+                  <strong id="profileStars">0</strong>
+                </article>
+                <article class="stat-card">
+                  <span>Interested Events</span>
+                  <strong id="profileInterestedCount">0</strong>
+                </article>
+                <article class="stat-card">
+                  <span>RSVP'd Events</span>
+                  <strong id="profileRsvpCount">0</strong>
+                </article>
+              </div>
+            </div>
+
+            <aside class="hero-side card">
+              <p class="eyebrow">Profile</p>
+              <form id="profileForm" class="profile-form">
+                <label>
+                  Name
+                  <input id="profileNameInput" name="name" type="text" required>
+                </label>
+                <label>
+                  Major
+                  <input id="profileMajorInput" name="major" type="text" required>
+                </label>
+                <label>
+                  Year
+                  <select id="profileYearInput" name="year" required>
+                    <option>First Year</option>
+                    <option>Second Year</option>
+                    <option>Third Year</option>
+                    <option>Fourth Year</option>
+                    <option>Graduate</option>
+                  </select>
+                </label>
+                <label>
+                  SASE Stars
+                  <input id="profileStarsInput" type="text" disabled>
+                </label>
+                <button class="button button-primary" type="submit">Save Profile</button>
+                <p class="form-note" id="profileNote" aria-live="polite"></p>
+              </form>
+            </aside>
+          </div>
+
+          <div class="home-grid">
+            <section class="card">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Member Snapshot</p>
+                  <h3>Your info</h3>
+                </div>
+              </div>
+              <div class="profile-summary">
+                <article>
+                  <span>Email</span>
+                  <strong id="profileEmail"></strong>
+                </article>
+                <article>
+                  <span>Role</span>
+                  <strong id="profileRole"></strong>
+                </article>
+                <article>
+                  <span>Leaderboard Eligible</span>
+                  <strong id="profileEligibility"></strong>
+                </article>
+              </div>
+            </section>
+
+            <section class="card">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Next Up</p>
+                  <h3>Event reminder</h3>
+                </div>
+              </div>
+              <div id="homeNextEvent" class="next-event"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="eventsView" data-view="events">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Event Board</p>
+              <h2>Know what's coming next and what already happened.</h2>
+            </div>
+          </div>
+
+          <section class="card event-section-card">
+            <div class="section-heading compact-heading">
+              <div>
+                <p class="eyebrow">Upcoming</p>
+                <h3>Events members can still join</h3>
+              </div>
+            </div>
+            <div id="upcomingEventsGrid" class="events-grid"></div>
+          </section>
+
+          <section class="card event-section-card">
+            <div class="section-heading compact-heading">
+              <div>
+                <p class="eyebrow">Completed</p>
+                <h3>Past events and earned stars</h3>
+              </div>
+            </div>
+            <div id="completedEventsGrid" class="events-grid"></div>
+          </section>
+        </section>
+
+        <section class="view" id="leaderboardView" data-view="leaderboard">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">SASE Stars</p>
+              <h2>Top members this semester.</h2>
+            </div>
+          </div>
+
+          <div class="leaderboard-layout">
+            <section class="card podium-card">
+              <h3>Top 3</h3>
+              <div class="podium" id="podium"></div>
+              <p class="muted-text">
+                Officers still earn stars, but they are automatically excluded from prize leaderboard rankings.
+              </p>
+            </section>
+
+            <section class="card rankings-card">
+              <h3>Top 10 Leaderboard</h3>
+              <div id="leaderboardList" class="leaderboard-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="officersView" data-view="officers">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Get to Know the Officers</p>
+              <h2>The team behind the chapter.</h2>
+            </div>
+          </div>
+          <div id="officerGrid" class="officer-grid"></div>
+        </section>
+
+        <section class="view" id="adminView" data-view="admin">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Officer Admin</p>
+              <h2>Manage the event lineup.</h2>
+            </div>
+          </div>
+
+          <div class="admin-layout">
+            <section class="card">
+              <h3>Add an event</h3>
+              <form id="adminEventForm" class="admin-form">
+                <label>
+                  Event name
+                  <input type="text" name="title" placeholder="SASE Resume Lab" required>
+                </label>
+                <label>
+                  Event type
+                  <select name="type" required>
+                    <option value="Social">Social</option>
+                    <option value="GBM">GBM</option>
+                    <option value="Professional">Professional</option>
+                    <option value="Workshop">Workshop</option>
+                  </select>
+                </label>
+                <label>
+                  Status
+                  <select name="status" required>
+                    <option value="upcoming">Upcoming</option>
+                    <option value="completed">Completed</option>
+                  </select>
+                </label>
+                <label>
+                  Date
+                  <input type="text" name="date" placeholder="Mon, Apr 14" required>
+                </label>
+                <label>
+                  Time
+                  <input type="text" name="time" placeholder="6:30 PM" required>
+                </label>
+                <label>
+                  Location
+                  <input type="text" name="location" placeholder="Engineering Hall 120" required>
+                </label>
+                <label>
+                  Stars
+                  <input type="number" min="0" name="stars" placeholder="70" required>
+                </label>
+                <label>
+                  Description
+                  <textarea name="description" rows="4" placeholder="What should members expect?" required></textarea>
+                </label>
+                <button class="button button-primary" type="submit">Add Event</button>
+                <p class="form-note" id="adminNote" aria-live="polite"></p>
+              </form>
+            </section>
+
+            <section class="card">
+              <h3>Current events</h3>
+              <div id="adminEventList" class="admin-event-list"></div>
+              <div class="demo-note hidden" id="adminCheckinLinkBox">
+                <strong>Live check-in link:</strong>
+                <a id="adminCheckinLink" href="#" target="_blank" rel="noreferrer"></a>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
