@@ -242,7 +242,8 @@ a {
 
 .auth-form label,
 .profile-form label,
-.admin-form label {
+.admin-form label,
+.data-filter-field {
   display: grid;
   gap: 0.45rem;
   font-weight: 600;
@@ -252,6 +253,7 @@ a {
 .auth-form select,
 .profile-form input,
 .profile-form select,
+.data-filter-field input,
 .admin-form input,
 .admin-form select,
 .admin-form textarea {
@@ -266,6 +268,7 @@ a {
 .auth-form select:focus,
 .profile-form input:focus,
 .profile-form select:focus,
+.data-filter-field input:focus,
 .admin-form input:focus,
 .admin-form select:focus,
 .admin-form textarea:focus {
@@ -783,6 +786,10 @@ a {
 
 .attendee-side {
   text-align: right;
+}
+
+.data-filter-field {
+  margin-top: 1rem;
 }
 
 .admin-event-actions {

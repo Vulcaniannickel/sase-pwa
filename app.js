@@ -59,6 +59,7 @@ const adminAttendanceEvent = document.getElementById("adminAttendanceEvent");
 const adminDataStats = document.getElementById("adminDataStats");
 const adminDataUsers = document.getElementById("adminDataUsers");
 const completedAdminEvents = document.getElementById("completedAdminEvents");
+const completedEventsFilter = document.getElementById("completedEventsFilter");
 const installButton = document.getElementById("installButton");
 const adminTabButton = document.getElementById("adminTabButton");
 const dataTabButton = document.getElementById("dataTabButton");
@@ -126,6 +127,10 @@ function formatCheckinTime(isoString) {
     hour: "numeric",
     minute: "2-digit"
   });
+}
+
+function getCompletedEventsFilterValue() {
+  return (completedEventsFilter?.value || "").trim().toLowerCase();
 }
 
 function clearCheckinQuery() {
@@ -313,6 +318,12 @@ navButtons.forEach((button) => {
 
 enableNotificationsButton.addEventListener("click", async () => {
   await enableNotifications();
+});
+
+completedEventsFilter?.addEventListener("input", () => {
+  if (appState.user?.role === "officer") {
+    renderData();
+  }
 });
 
 loginForm.addEventListener("submit", async (event) => {
@@ -757,18 +768,57 @@ function renderAdminData() {
   });
 
   const completedEvents = appState.adminData.events.filter((eventRecord) => eventRecord.status === "completed");
+  const filterValue = getCompletedEventsFilterValue();
+  const filteredCompletedEvents = completedEvents.filter((eventRecord) => {
+    if (!filterValue) {
+      return true;
+    }
+
+    const attendeeText = (eventRecord.attendees || [])
+      .map((attendee) => [attendee.name, attendee.email, attendee.major, attendee.year].join(" "))
+      .join(" ")
+      .toLowerCase();
+
+    const eventText = [
+      eventRecord.title,
+      eventRecord.type,
+      eventRecord.date,
+      eventRecord.time,
+      eventRecord.location
+    ].join(" ").toLowerCase();
+
+    return eventText.includes(filterValue) || attendeeText.includes(filterValue);
+  });
+
+  if (!filteredCompletedEvents.length) {
+    completedAdminEvents.appendChild(
+      createEmptyState(filterValue ? "No completed events or attendees match that search yet." : "Completed events will appear here once officers mark them finished.")
+    );
+    return;
+  }
+
   if (!completedEvents.length) {
     completedAdminEvents.appendChild(createEmptyState("Completed events will appear here once officers mark them finished."));
     return;
   }
 
-  completedEvents.forEach((eventRecord) => {
+  filteredCompletedEvents.forEach((eventRecord) => {
     const wrapper = document.createElement("details");
     wrapper.className = "completed-event-card";
 
     const attendees = eventRecord.attendees || [];
-    const attendeeMarkup = attendees.length
-      ? attendees.map((attendee) => `
+    const filteredAttendees = attendees.filter((attendee) => {
+      if (!filterValue) {
+        return true;
+      }
+
+      return [attendee.name, attendee.email, attendee.major, attendee.year]
+        .join(" ")
+        .toLowerCase()
+        .includes(filterValue);
+    });
+    const attendeeMarkup = filteredAttendees.length
+      ? filteredAttendees.map((attendee) => `
           <article class="attendee-row">
             <div>
               <strong>${attendee.name}</strong>
@@ -780,7 +830,7 @@ function renderAdminData() {
             </div>
           </article>
         `).join("")
-      : `<div class="empty-state">No member check-ins were recorded for this event.</div>`;
+      : `<div class="empty-state">${attendees.length ? "No attendees in this event match the current search." : "No member check-ins were recorded for this event."}</div>`;
 
     wrapper.innerHTML = `
       <summary class="completed-event-summary">
