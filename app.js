@@ -498,12 +498,13 @@ async function toggleRsvp(eventId) {
   }
 }
 
-async function deleteEvent(eventId) {
+async function completeEvent(eventId) {
   try {
-    appState = await apiFetch(`/api/admin/events/${eventId}`, {
-      method: "DELETE",
+    appState = await apiFetch(`/api/admin/events/${eventId}/complete`, {
+      method: "POST",
       body: JSON.stringify({})
     });
+    adminNote.textContent = "Event marked as completed.";
     renderDashboard();
   } catch (error) {
     adminNote.textContent = error.message;
@@ -770,14 +771,16 @@ function renderAdmin() {
       <div class="admin-event-actions">
         <button class="button button-ghost" type="button">${eventRecord.checkinActive ? "Attendance Live" : "Start Attendance"}</button>
         <button class="button button-secondary" type="button">Stop Attendance</button>
-        <button class="button button-danger" type="button">Delete Event</button>
+        <button class="button button-danger" type="button">Complete Event</button>
       </div>
     `;
     const buttons = row.querySelectorAll("button");
     buttons[0].addEventListener("click", () => startCheckin(eventRecord.id));
     buttons[1].addEventListener("click", () => stopCheckin(eventRecord.id));
-    buttons[2].addEventListener("click", () => deleteEvent(eventRecord.id));
+    buttons[2].addEventListener("click", () => completeEvent(eventRecord.id));
+    buttons[0].disabled = eventRecord.status === "completed" || eventRecord.checkinActive;
     buttons[1].disabled = !eventRecord.checkinActive;
+    buttons[2].disabled = eventRecord.status === "completed";
     adminEventList.appendChild(row);
   });
 }

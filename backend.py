@@ -570,6 +570,8 @@ def start_checkin(_, event_id):
     event_obj = db.get(Event, event_id)
     if event_obj is None:
         return jsonify({"error": "Event not found."}), 404
+    if event_obj.status == "completed":
+        return jsonify({"error": "Completed events cannot start attendance again."}), 400
     token = event_obj.checkin_token or secrets.token_urlsafe(16)
     attendance_code = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(6))
     for live_event in db.scalars(select(Event).where(Event.id != event_id, Event.checkin_active.is_(True))).all():
@@ -597,18 +599,16 @@ def stop_checkin(_, event_id):
     return jsonify(get_dashboard_payload(get_current_user(db)))
 
 
-@app.delete("/api/admin/events/<int:event_id>")
+@app.post("/api/admin/events/<int:event_id>/complete")
 @officer_required
-def delete_event(_, event_id):
+def complete_event(_, event_id):
     db = get_db()
     event_obj = db.get(Event, event_id)
     if event_obj is None:
         return jsonify({"error": "Event not found."}), 404
-    for attendance in list(event_obj.attendance_records):
-        attendee = db.get(User, attendance.user_id)
-        if attendee is not None:
-            attendee.stars = max(0, attendee.stars - event_obj.stars)
-    db.delete(event_obj)
+    event_obj.status = "completed"
+    event_obj.checkin_active = False
+    event_obj.attendance_code = None
     db.commit()
     return jsonify(get_dashboard_payload(get_current_user(db)))
 

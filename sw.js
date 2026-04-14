@@ -1,4 +1,4 @@
-const CACHE_NAME = "sase-student-portal-v3";
+const CACHE_NAME = "sase-student-portal-v4";
 const APP_ASSETS = [
   "./",
   "./index.html",
@@ -36,20 +36,27 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
+  const requestUrl = new URL(event.request.url);
+  if (requestUrl.pathname.startsWith("/api/")) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
 
-      return fetch(event.request)
-        .then((networkResponse) => {
+  event.respondWith(
+    fetch(event.request)
+      .then((networkResponse) => {
+        const shouldCache =
+          requestUrl.origin === self.location.origin &&
+          APP_ASSETS.some((asset) => requestUrl.pathname === new URL(asset, self.location.origin).pathname);
+
+        if (shouldCache) {
           const responseClone = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseClone));
-          return networkResponse;
-        })
-        .catch(() => caches.match("./index.html"));
-    })
+        }
+
+        return networkResponse;
+      })
+      .catch(() => caches.match(event.request).then((cachedResponse) => cachedResponse || caches.match("./index.html")))
   );
 });
 
