@@ -386,7 +386,30 @@ a {
 }
 
 .dashboard-main {
+  position: relative;
   display: grid;
+  padding: 1rem;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+}
+
+.dashboard-main::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background:
+    linear-gradient(180deg, rgba(244, 248, 251, 0.82), rgba(232, 239, 245, 0.88)),
+    linear-gradient(135deg, rgba(7, 25, 44, 0.28), rgba(13, 77, 140, 0.14)),
+    var(--hero-image);
+  background-size: cover;
+  background-position: center 38%;
+  filter: saturate(0.92);
+}
+
+.dashboard-main > * {
+  position: relative;
+  z-index: 1;
 }
 
 .view {
