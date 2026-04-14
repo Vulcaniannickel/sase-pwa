@@ -58,6 +58,7 @@ const adminAttendanceCode = document.getElementById("adminAttendanceCode");
 const adminAttendanceEvent = document.getElementById("adminAttendanceEvent");
 const adminDataStats = document.getElementById("adminDataStats");
 const adminDataUsers = document.getElementById("adminDataUsers");
+const completedAdminEvents = document.getElementById("completedAdminEvents");
 const installButton = document.getElementById("installButton");
 const adminTabButton = document.getElementById("adminTabButton");
 const dataTabButton = document.getElementById("dataTabButton");
@@ -703,9 +704,11 @@ function renderNotificationEventOptions() {
 function renderAdminData() {
   adminDataStats.innerHTML = "";
   adminDataUsers.innerHTML = "";
+  completedAdminEvents.innerHTML = "";
 
   if (!appState.adminData) {
     adminDataUsers.appendChild(createEmptyState("Backend data will appear here for officer accounts."));
+    completedAdminEvents.appendChild(createEmptyState("Completed events will appear here for officer accounts."));
     return;
   }
 
@@ -734,6 +737,24 @@ function renderAdminData() {
     `;
     adminDataUsers.appendChild(row);
   });
+
+  const completedEvents = appState.adminData.events.filter((eventRecord) => eventRecord.status === "completed");
+  if (!completedEvents.length) {
+    completedAdminEvents.appendChild(createEmptyState("Completed events will appear here once officers mark them finished."));
+    return;
+  }
+
+  completedEvents.forEach((eventRecord) => {
+    const row = document.createElement("article");
+    row.className = "admin-event-row";
+    row.innerHTML = `
+      <strong>${eventRecord.title}</strong>
+      <div class="admin-event-meta">${eventRecord.type} - ${eventRecord.date} - ${eventRecord.time}</div>
+      <div class="admin-event-meta">${eventRecord.location}</div>
+      <div class="admin-event-meta">${eventRecord.stars} stars - ${eventRecord.attendanceCount} attended - ${eventRecord.rsvpCount} RSVP'd - ${eventRecord.interestedCount} interested</div>
+    `;
+    completedAdminEvents.appendChild(row);
+  });
 }
 
 function renderAdmin() {
@@ -751,7 +772,6 @@ function renderAdmin() {
   }
 
   renderNotificationEventOptions();
-  renderAdminData();
 
   const activeEvent = appState.adminLiveCheckinEvent;
   adminCheckinLinkBox.classList.toggle("hidden", !activeEvent);
@@ -761,7 +781,13 @@ function renderAdmin() {
     : "";
 
   adminEventList.innerHTML = "";
-  appState.events.forEach((eventRecord) => {
+  const activeEvents = appState.events.filter((eventRecord) => eventRecord.status !== "completed");
+  if (!activeEvents.length) {
+    adminEventList.appendChild(createEmptyState("No active events right now. Add a new one to get started."));
+    return;
+  }
+
+  activeEvents.forEach((eventRecord) => {
     const row = document.createElement("article");
     row.className = "admin-event-row";
     row.innerHTML = `
