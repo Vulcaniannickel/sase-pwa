@@ -110,6 +110,24 @@ function createEmptyState(message) {
   return stateNode;
 }
 
+function formatCheckinTime(isoString) {
+  if (!isoString) {
+    return "";
+  }
+
+  const parsed = new Date(isoString);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+
+  return parsed.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+}
+
 function clearCheckinQuery() {
   const url = new URL(window.location.href);
   url.searchParams.delete("checkin");
@@ -745,15 +763,44 @@ function renderAdminData() {
   }
 
   completedEvents.forEach((eventRecord) => {
-    const row = document.createElement("article");
-    row.className = "admin-event-row";
-    row.innerHTML = `
-      <strong>${eventRecord.title}</strong>
-      <div class="admin-event-meta">${eventRecord.type} - ${eventRecord.date} - ${eventRecord.time}</div>
-      <div class="admin-event-meta">${eventRecord.location}</div>
-      <div class="admin-event-meta">${eventRecord.stars} stars - ${eventRecord.attendanceCount} attended - ${eventRecord.rsvpCount} RSVP'd - ${eventRecord.interestedCount} interested</div>
+    const wrapper = document.createElement("details");
+    wrapper.className = "completed-event-card";
+
+    const attendees = eventRecord.attendees || [];
+    const attendeeMarkup = attendees.length
+      ? attendees.map((attendee) => `
+          <article class="attendee-row">
+            <div>
+              <strong>${attendee.name}</strong>
+              <div class="admin-event-meta">${attendee.major} - ${attendee.year}</div>
+            </div>
+            <div class="attendee-side">
+              <div class="admin-event-meta">${attendee.email}</div>
+              <div class="admin-event-meta">${formatCheckinTime(attendee.checkedInAt)}</div>
+            </div>
+          </article>
+        `).join("")
+      : `<div class="empty-state">No member check-ins were recorded for this event.</div>`;
+
+    wrapper.innerHTML = `
+      <summary class="completed-event-summary">
+        <div>
+          <strong>${eventRecord.title}</strong>
+          <div class="admin-event-meta">${eventRecord.type} - ${eventRecord.date} - ${eventRecord.time}</div>
+          <div class="admin-event-meta">${eventRecord.location}</div>
+        </div>
+        <div class="completed-event-stats">
+          <span>${eventRecord.attendanceCount} attended</span>
+          <span>${eventRecord.rsvpCount} RSVP'd</span>
+          <span>${eventRecord.stars} stars</span>
+        </div>
+      </summary>
+      <div class="attendee-list">
+        ${attendeeMarkup}
+      </div>
     `;
-    completedAdminEvents.appendChild(row);
+
+    completedAdminEvents.appendChild(wrapper);
   });
 }
 
