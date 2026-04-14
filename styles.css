@@ -721,6 +721,21 @@ a {
   font-weight: 800;
 }
 
+.officer-photo,
+.officer-photo-preview img {
+  width: 4.8rem;
+  height: 4.8rem;
+  object-fit: cover;
+  border-radius: 50%;
+  border: 3px solid rgba(13, 77, 140, 0.12);
+  box-shadow: 0 14px 30px rgba(8, 30, 56, 0.12);
+}
+
+.officer-photo {
+  display: block;
+  margin: 0 auto 0.8rem;
+}
+
 .officer-role {
   color: var(--secondary);
   font-weight: 700;
@@ -794,6 +809,10 @@ a {
 
 .data-filter-field {
   margin-top: 1rem;
+}
+
+.officer-photo-preview {
+  margin-top: 0.25rem;
 }
 
 .admin-event-actions {

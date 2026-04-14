@@ -16,6 +16,7 @@ let appState = {
 };
 let deferredPrompt;
 let pendingCheckinToken = new URLSearchParams(window.location.search).get("checkin") || "";
+let pendingProfileImage = "";
 
 const authScreen = document.getElementById("authScreen");
 const dashboard = document.getElementById("dashboard");
@@ -77,6 +78,9 @@ const profileYearInput = document.getElementById("profileYearInput");
 const profileStarsInput = document.getElementById("profileStarsInput");
 const profilePositionField = document.getElementById("profilePositionField");
 const profilePositionInput = document.getElementById("profilePositionInput");
+const profilePhotoField = document.getElementById("profilePhotoField");
+const profilePhotoInput = document.getElementById("profilePhotoInput");
+const profilePhotoPreview = document.getElementById("profilePhotoPreview");
 const profileBioField = document.getElementById("profileBioField");
 const profileBioInput = document.getElementById("profileBioInput");
 const profileEmail = document.getElementById("profileEmail");
@@ -131,6 +135,17 @@ function formatCheckinTime(isoString) {
 
 function getCompletedEventsFilterValue() {
   return (completedEventsFilter?.value || "").trim().toLowerCase();
+}
+
+function renderOfficerPhotoPreview(imageUrl, fallbackText = "Officer photo preview") {
+  if (!profilePhotoPreview) {
+    return;
+  }
+
+  profilePhotoPreview.classList.toggle("hidden", !imageUrl);
+  profilePhotoPreview.innerHTML = imageUrl
+    ? `<img src="${imageUrl}" alt="${fallbackText}">`
+    : "";
 }
 
 function clearCheckinQuery() {
@@ -326,6 +341,38 @@ completedEventsFilter?.addEventListener("input", () => {
   }
 });
 
+profilePhotoInput?.addEventListener("change", () => {
+  const [file] = profilePhotoInput.files || [];
+  if (!file) {
+    pendingProfileImage = appState.user?.profileImage || "";
+    renderOfficerPhotoPreview(pendingProfileImage, `${appState.user?.name || "Officer"} profile photo`);
+    return;
+  }
+
+  if (!file.type.startsWith("image/")) {
+    profileNote.textContent = "Please choose an image file.";
+    profilePhotoInput.value = "";
+    return;
+  }
+
+  if (file.size > 1_500_000) {
+    profileNote.textContent = "Please choose an image under 1.5 MB.";
+    profilePhotoInput.value = "";
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    pendingProfileImage = typeof reader.result === "string" ? reader.result : "";
+    profileNote.textContent = "";
+    renderOfficerPhotoPreview(pendingProfileImage, `${appState.user?.name || "Officer"} profile photo`);
+  };
+  reader.onerror = () => {
+    profileNote.textContent = "We couldn't read that image. Please try a different file.";
+  };
+  reader.readAsDataURL(file);
+});
+
 loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   loginNote.textContent = "";
@@ -390,10 +437,15 @@ profileForm.addEventListener("submit", async (event) => {
         major: profileMajorInput.value.trim(),
         year: profileYearInput.value,
         position: profilePositionInput ? profilePositionInput.value.trim() : "",
-        bio: profileBioInput ? profileBioInput.value.trim() : ""
+        bio: profileBioInput ? profileBioInput.value.trim() : "",
+        profileImage: profilePhotoField && !profilePhotoField.classList.contains("hidden") ? pendingProfileImage : ""
       })
     });
     profileNote.textContent = "Your profile has been updated.";
+    pendingProfileImage = appState.user?.profileImage || "";
+    if (profilePhotoInput) {
+      profilePhotoInput.value = "";
+    }
     renderDashboard();
   } catch (error) {
     profileNote.textContent = error.message;
@@ -488,6 +540,11 @@ logoutButton.addEventListener("click", async () => {
   adminNote.textContent = "";
   adminNotificationNote.textContent = "";
   liveCheckinNote.textContent = "";
+  pendingProfileImage = "";
+  if (profilePhotoInput) {
+    profilePhotoInput.value = "";
+  }
+  renderOfficerPhotoPreview("");
   renderApp();
   await loadCheckinPrompt();
   await syncNotificationButtonState();
@@ -654,7 +711,7 @@ function renderOfficers() {
     const card = document.createElement("article");
     card.className = "officer-card";
     card.innerHTML = `
-      <div class="officer-avatar" aria-hidden="true">${officer.initials}</div>
+      ${officer.profileImage ? `<img class="officer-photo" src="${officer.profileImage}" alt="${officer.name} portrait">` : `<div class="officer-avatar" aria-hidden="true">${officer.initials}</div>`}
       <h3>${officer.name}</h3>
       <p class="officer-role">${officer.role}</p>
       <p>${officer.major}</p>
@@ -974,8 +1031,11 @@ function renderHome() {
   profileStarsInput.value = `${user.stars} stars`;
   profilePositionInput.value = user.position || "";
   profileBioInput.value = user.bio || "";
+  pendingProfileImage = user.profileImage || "";
   profilePositionField.classList.toggle("hidden", user.role !== "officer");
+  profilePhotoField.classList.toggle("hidden", user.role !== "officer");
   profileBioField.classList.toggle("hidden", user.role !== "officer");
+  renderOfficerPhotoPreview(user.profileImage || "", `${user.name} profile photo`);
   profileEmail.textContent = user.email;
   profileRole.textContent = user.role === "officer" ? "Officer" : "Member";
   profileEligibility.textContent = user.eligibleForLeaderboard ? "Eligible" : "Officer excluded from prizes";

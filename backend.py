@@ -8,7 +8,7 @@ from functools import wraps
 from pathlib import Path
 
 from flask import Flask, g, jsonify, request, send_from_directory, session as flask_session
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, event, func, select
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, event, func, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, scoped_session, sessionmaker
@@ -58,6 +58,7 @@ class User(Base):
     stars: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     eligible_for_leaderboard: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     bio: Mapped[str | None] = mapped_column(Text)
+    profile_image: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_events: Mapped[list["Event"]] = relationship(back_populates="creator")
     interests: Mapped[list["EventInterest"]] = relationship(back_populates="user", cascade="all, delete-orphan")
@@ -161,8 +162,19 @@ def get_db():
 def utc_now():
     return datetime.now(timezone.utc)
 
+
+def ensure_column(table_name, column_name, column_sql):
+    inspector = inspect(engine)
+    existing_columns = {column["name"] for column in inspector.get_columns(table_name)}
+    if column_name in existing_columns:
+        return
+    with engine.begin() as connection:
+        connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}"))
+
+
 def init_db():
     Base.metadata.create_all(engine)
+    ensure_column("users", "profile_image", "TEXT")
     with Session(engine) as db:
         if (db.scalar(select(func.count()).select_from(Event)) or 0) == 0:
             db.add_all([
@@ -205,7 +217,7 @@ def send_push_to_rows(rows, payload):
 
 
 def row_to_user(user):
-    return {"id": user.id, "name": user.name, "email": user.email, "major": user.major, "year": user.year, "role": user.role, "position": user.position or "", "stars": user.stars, "eligibleForLeaderboard": bool(user.eligible_for_leaderboard), "bio": user.bio or ""}
+    return {"id": user.id, "name": user.name, "email": user.email, "major": user.major, "year": user.year, "role": user.role, "position": user.position or "", "stars": user.stars, "eligibleForLeaderboard": bool(user.eligible_for_leaderboard), "bio": user.bio or "", "profileImage": user.profile_image or ""}
 
 
 def serialize_event(event_obj, current_user_id=None):
@@ -237,7 +249,7 @@ def get_officers(db):
     officers = db.scalars(select(User).where(User.role == "officer").order_by(User.name.asc())).all()
     result = []
     for user in officers:
-        result.append({"id": user.id, "name": user.name, "role": user.position or "Officer", "major": user.major, "bio": user.bio or "Officer profile ready for customization.", "initials": "".join(part[0].upper() for part in user.name.split()[:2] if part)})
+        result.append({"id": user.id, "name": user.name, "role": user.position or "Officer", "major": user.major, "bio": user.bio or "Officer profile ready for customization.", "initials": "".join(part[0].upper() for part in user.name.split()[:2] if part), "profileImage": user.profile_image or ""})
     return result
 
 
@@ -248,7 +260,7 @@ def build_admin_data():
     subscriptions = db.scalars(select(PushSubscription).order_by(PushSubscription.created_at.desc())).all()
     return {
         "stats": {"users": len(users), "members": sum(1 for user in users if user.role == "member"), "officers": sum(1 for user in users if user.role == "officer"), "events": len(events), "liveCheckins": sum(1 for event_obj in events if event_obj.checkin_active), "subscriptions": len(subscriptions), "rsvps": sum(len(event_obj.rsvps) for event_obj in events), "interests": sum(len(event_obj.interests) for event_obj in events), "attendance": sum(len(event_obj.attendance_records) for event_obj in events)},
-        "users": [{"id": user.id, "name": user.name, "email": user.email, "major": user.major, "year": user.year, "role": user.role, "position": user.position or "", "stars": user.stars, "eligibleForLeaderboard": bool(user.eligible_for_leaderboard), "createdAt": user.created_at.isoformat()} for user in users],
+        "users": [{"id": user.id, "name": user.name, "email": user.email, "major": user.major, "year": user.year, "role": user.role, "position": user.position or "", "stars": user.stars, "eligibleForLeaderboard": bool(user.eligible_for_leaderboard), "createdAt": user.created_at.isoformat(), "profileImage": user.profile_image or ""} for user in users],
         "events": [{"id": event_obj.id, "title": event_obj.title, "type": event_obj.type, "status": event_obj.status, "date": event_obj.date, "time": event_obj.time, "location": event_obj.location, "stars": event_obj.stars, "checkinActive": bool(event_obj.checkin_active), "attendanceCode": event_obj.attendance_code or "", "interestedCount": len(event_obj.interests), "rsvpCount": len(event_obj.rsvps), "attendanceCount": len(event_obj.attendance_records), "attendees": [{"id": attendance.user.id, "name": attendance.user.name, "email": attendance.user.email, "major": attendance.user.major, "year": attendance.user.year, "checkedInAt": attendance.created_at.isoformat()} for attendance in sorted(event_obj.attendance_records, key=lambda record: record.created_at)]} for event_obj in events],
         "subscriptions": [{"id": subscription.id, "userId": subscription.user_id, "endpoint": subscription.endpoint, "createdAt": subscription.created_at.isoformat()} for subscription in subscriptions],
     }
@@ -395,14 +407,18 @@ def update_profile(user):
     year = str(payload.get("year", "")).strip()
     position = str(payload.get("position", "")).strip()
     bio = str(payload.get("bio", "")).strip()
+    profile_image = str(payload.get("profileImage", "")).strip()
     if not all([name, major, year]) or year not in YEAR_OPTIONS:
         return jsonify({"error": "Please provide a valid name, major, and year."}), 400
+    if profile_image and (not profile_image.startswith("data:image/") or len(profile_image) > 2_000_000):
+        return jsonify({"error": "Please upload a valid image under 2 MB."}), 400
     db = get_db()
     user.name = name
     user.major = major
     user.year = year
     user.position = position if user.role == "officer" else ""
     user.bio = bio if user.role == "officer" else ""
+    user.profile_image = profile_image if user.role == "officer" else ""
     db.commit()
     return jsonify(get_dashboard_payload(user))
 
