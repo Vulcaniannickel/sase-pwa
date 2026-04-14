@@ -60,7 +60,9 @@ const adminDataStats = document.getElementById("adminDataStats");
 const adminDataUsers = document.getElementById("adminDataUsers");
 const installButton = document.getElementById("installButton");
 const adminTabButton = document.getElementById("adminTabButton");
+const dataTabButton = document.getElementById("dataTabButton");
 const adminView = document.getElementById("adminView");
+const dataView = document.getElementById("dataView");
 const logoutButton = document.getElementById("logoutButton");
 const welcomeMessage = document.getElementById("welcomeMessage");
 const welcomeSubtext = document.getElementById("welcomeSubtext");
@@ -462,7 +464,7 @@ logoutButton.addEventListener("click", async () => {
 });
 
 function showTab(viewName) {
-  if (viewName === "admin" && appState.user?.role !== "officer") {
+  if ((viewName === "admin" || viewName === "data") && appState.user?.role !== "officer") {
     viewName = "home";
   }
 
@@ -741,8 +743,6 @@ function renderAdmin() {
 
   if (!isOfficer) {
     adminCheckinLinkBox.classList.add("hidden");
-    adminDataStats.innerHTML = "";
-    adminDataUsers.innerHTML = "";
     if (document.querySelector(".view.active")?.dataset.view === "admin") {
       showTab("home");
     }
@@ -780,6 +780,23 @@ function renderAdmin() {
     buttons[1].disabled = !eventRecord.checkinActive;
     adminEventList.appendChild(row);
   });
+}
+
+function renderData() {
+  const isOfficer = appState.user?.role === "officer";
+  dataTabButton.classList.toggle("hidden", !isOfficer);
+  dataView.classList.toggle("hidden", !isOfficer);
+
+  if (!isOfficer) {
+    adminDataStats.innerHTML = "";
+    adminDataUsers.innerHTML = "";
+    if (document.querySelector(".view.active")?.dataset.view === "data") {
+      showTab("home");
+    }
+    return;
+  }
+
+  renderAdminData();
 }
 
 function renderLiveCheckin() {
@@ -857,6 +874,7 @@ function renderDashboard() {
   renderLeaderboard();
   renderOfficers();
   renderAdmin();
+  renderData();
 }
 
 function renderApp() {

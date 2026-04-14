@@ -135,6 +135,7 @@
           <button class="nav-pill" data-tab-target="leaderboard" type="button">Leaderboard</button>
           <button class="nav-pill" data-tab-target="officers" type="button">Officers</button>
           <button class="nav-pill hidden" data-tab-target="admin" id="adminTabButton" type="button">Admin</button>
+          <button class="nav-pill hidden" data-tab-target="data" id="dataTabButton" type="button">Data</button>
         </nav>
 
         <div class="topbar-actions">
@@ -334,7 +335,7 @@
           <div class="section-heading">
             <div>
               <p class="eyebrow">Officer Admin</p>
-              <h2>Manage the event lineup.</h2>
+              <h2>Create and manage events.</h2>
             </div>
           </div>
 
@@ -426,7 +427,18 @@
                 <div id="adminAttendanceEvent"></div>
               </div>
             </section>
+          </div>
+        </section>
 
+        <section class="view" id="dataView" data-view="data">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Officer Data</p>
+              <h2>Review members and shared club data.</h2>
+            </div>
+          </div>
+
+          <div class="admin-layout">
             <section class="card">
               <h3>Backend Data</h3>
               <p class="muted-text">Officer-only snapshot of the shared database.</p>
