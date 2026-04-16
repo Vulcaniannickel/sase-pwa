@@ -731,12 +731,16 @@ function renderLeaderboard() {
     return;
   }
 
-  [appState.leaderboard[1], appState.leaderboard[0], appState.leaderboard[2]]
-    .filter(Boolean)
-    .forEach((member, index) => {
-      const classes = ["second", "first", "third"];
+  [
+    { member: appState.leaderboard[1], placeClass: "second" },
+    { member: appState.leaderboard[0], placeClass: "first" },
+    { member: appState.leaderboard[2], placeClass: "third" }
+  ]
+    .filter((entry) => Boolean(entry.member))
+    .forEach((entry) => {
+      const { member, placeClass } = entry;
       const place = document.createElement("div");
-      place.className = `podium-place ${classes[index]}`;
+      place.className = `podium-place ${placeClass}`;
       place.innerHTML = `
         <div class="podium-label">
           <strong>${member.name}</strong>
