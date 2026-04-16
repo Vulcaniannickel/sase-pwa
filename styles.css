@@ -371,9 +371,15 @@ a {
   border-radius: 50%;
   display: grid;
   place-items: center;
-  color: white;
-  font-weight: 800;
-  background: linear-gradient(135deg, var(--primary), var(--secondary));
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: inset 0 0 0 1px rgba(13, 77, 140, 0.08);
+}
+
+.brand-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .brand-text {
@@ -636,6 +642,18 @@ a {
   text-align: center;
 }
 
+.podium-place.first .podium-label strong {
+  color: #9d7300;
+}
+
+.podium-place.second .podium-label strong {
+  color: #697480;
+}
+
+.podium-place.third .podium-label strong {
+  color: #8c5636;
+}
+
 .podium-pillar {
   width: 100%;
   border-radius: 18px 18px 0 0;
@@ -698,6 +716,45 @@ a {
 .leaderboard-stars {
   color: var(--secondary);
   font-weight: 800;
+}
+
+.leaderboard-row.top-1 {
+  background: linear-gradient(135deg, rgba(240, 207, 99, 0.22), rgba(255, 255, 255, 0.92));
+}
+
+.leaderboard-row.top-2 {
+  background: linear-gradient(135deg, rgba(186, 194, 202, 0.22), rgba(255, 255, 255, 0.92));
+}
+
+.leaderboard-row.top-3 {
+  background: linear-gradient(135deg, rgba(170, 113, 80, 0.22), rgba(255, 255, 255, 0.92));
+}
+
+.leaderboard-row.top-1 .rank-badge {
+  background: linear-gradient(180deg, #f3d86f, var(--gold));
+  color: #624600;
+}
+
+.leaderboard-row.top-2 .rank-badge {
+  background: linear-gradient(180deg, #d8e0e7, var(--silver));
+  color: #44515f;
+}
+
+.leaderboard-row.top-3 .rank-badge {
+  background: linear-gradient(180deg, #cd916d, var(--bronze));
+  color: #5d331d;
+}
+
+.leaderboard-row.top-1 .leaderboard-stars {
+  color: #9d7300;
+}
+
+.leaderboard-row.top-2 .leaderboard-stars {
+  color: #697480;
+}
+
+.leaderboard-row.top-3 .leaderboard-stars {
+  color: #8c5636;
 }
 
 .officer-grid {

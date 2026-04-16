@@ -751,7 +751,7 @@ function renderLeaderboard() {
 
   appState.leaderboard.forEach((member, index) => {
     const row = document.createElement("article");
-    row.className = "leaderboard-row";
+    row.className = `leaderboard-row${index < 3 ? ` top-${index + 1}` : ""}`;
     row.innerHTML = `
       <div class="rank-badge">${index + 1}</div>
       <div>
