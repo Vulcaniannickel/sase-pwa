@@ -372,8 +372,10 @@ a {
   display: grid;
   place-items: center;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: inset 0 0 0 1px rgba(13, 77, 140, 0.08);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow:
+    inset 0 0 0 1px rgba(13, 77, 140, 0.08),
+    0 8px 18px rgba(8, 30, 56, 0.08);
 }
 
 .brand-mark img {
@@ -658,21 +660,28 @@ a {
   width: 100%;
   border-radius: 18px 18px 0 0;
   min-height: 110px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 20px 32px rgba(8, 30, 56, 0.12);
 }
 
 .podium-place.first .podium-pillar {
   height: 190px;
-  background: linear-gradient(180deg, #eed071, var(--gold));
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0) 28%),
+    linear-gradient(180deg, #f8df7f 0%, #ebc95f 42%, var(--gold) 100%);
 }
 
 .podium-place.second .podium-pillar {
   height: 150px;
-  background: linear-gradient(180deg, #d6dde5, var(--silver));
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0) 28%),
+    linear-gradient(180deg, #e3e8ee 0%, #ccd4db 42%, var(--silver) 100%);
 }
 
 .podium-place.third .podium-pillar {
   height: 126px;
-  background: linear-gradient(180deg, #c78962, var(--bronze));
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0) 28%),
+    linear-gradient(180deg, #d79a73 0%, #be7f57 42%, var(--bronze) 100%);
 }
 
 .leaderboard-list,
