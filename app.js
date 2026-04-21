@@ -355,8 +355,8 @@ profilePhotoInput?.addEventListener("change", () => {
     return;
   }
 
-  if (file.size > 1_500_000) {
-    profileNote.textContent = "Please choose an image under 1.5 MB.";
+  if (file.size > 5_000_000) {
+    profileNote.textContent = "Please choose an image under 5 MB.";
     profilePhotoInput.value = "";
     return;
   }

@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import os
 import secrets
-from datetime import datetime, timezone
+import threading
+import time
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from flask import Flask, g, jsonify, request, send_from_directory, session as flask_session
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, event, func, inspect, select, text
@@ -32,6 +35,7 @@ SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
 VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
 VAPID_CLAIMS_SUBJECT = os.environ.get("VAPID_CLAIMS_SUBJECT", "mailto:ryankreger364@gmail.com")
+APP_TIMEZONE = os.environ.get("APP_TIMEZONE", "America/New_York")
 YEAR_OPTIONS = {"First Year", "Second Year", "Third Year", "Fourth Year", "Graduate"}
 EVENT_TYPES = {"Social", "GBM", "Professional", "Workshop"}
 EVENT_STATUSES = {"upcoming", "completed"}
@@ -39,6 +43,7 @@ EVENT_STATUSES = {"upcoming", "completed"}
 app = Flask(__name__, static_folder=".")
 app.config["SECRET_KEY"] = SECRET_KEY
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+notification_worker_started = False
 
 
 class Base(DeclarativeBase):
@@ -81,6 +86,8 @@ class Event(Base):
     checkin_token: Mapped[str | None] = mapped_column(String(255))
     checkin_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     attendance_code: Mapped[str | None] = mapped_column(String(20))
+    reminder_notification_sent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    start_notification_sent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     creator: Mapped[User | None] = relationship(back_populates="created_events")
@@ -175,6 +182,8 @@ def ensure_column(table_name, column_name, column_sql):
 def init_db():
     Base.metadata.create_all(engine)
     ensure_column("users", "profile_image", "TEXT")
+    ensure_column("events", "reminder_notification_sent", "BOOLEAN DEFAULT FALSE NOT NULL")
+    ensure_column("events", "start_notification_sent", "BOOLEAN DEFAULT FALSE NOT NULL")
     with Session(engine) as db:
         if (db.scalar(select(func.count()).select_from(Event)) or 0) == 0:
             db.add_all([
@@ -190,6 +199,31 @@ def push_notifications_configured():
     return webpush is not None and bool(VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY)
 
 
+def get_app_timezone():
+    try:
+        return ZoneInfo(APP_TIMEZONE)
+    except Exception:
+        return ZoneInfo("America/New_York")
+
+
+def parse_event_datetime(event_obj):
+    event_stamp = f"{event_obj.date} {event_obj.time}".strip()
+    formats = [
+        "%a, %b %d %I:%M %p",
+        "%A, %b %d %I:%M %p",
+        "%b %d %I:%M %p",
+        "%a %b %d %I:%M %p",
+        "%A %b %d %I:%M %p"
+    ]
+    for fmt in formats:
+        try:
+            naive = datetime.strptime(event_stamp, fmt)
+            return naive.replace(year=datetime.now(get_app_timezone()).year, tzinfo=get_app_timezone())
+        except ValueError:
+            continue
+    return None
+
+
 def build_push_payload(title, body, event_obj=None):
     payload = {"title": title, "body": body, "url": "/"}
     if event_obj is not None:
@@ -198,10 +232,10 @@ def build_push_payload(title, body, event_obj=None):
     return json.dumps(payload)
 
 
-def send_push_to_rows(rows, payload):
+def send_push_to_rows(rows, payload, db=None):
     if not push_notifications_configured() or webpush is None:
         return 0, 0
-    db = get_db()
+    active_db = db or get_db()
     delivered = 0
     failed = 0
     for row in rows:
@@ -211,9 +245,73 @@ def send_push_to_rows(rows, payload):
         except WebPushException as exc:
             failed += 1
             if getattr(getattr(exc, "response", None), "status_code", None) in {404, 410}:
-                db.delete(row)
-    db.commit()
+                active_db.delete(row)
+    active_db.commit()
     return delivered, failed
+
+
+def send_event_push_to_all(db, event_obj, title, body):
+    rows = db.scalars(select(PushSubscription).order_by(PushSubscription.created_at.desc())).all()
+    if not rows:
+        return 0, 0
+    return send_push_to_rows(rows, build_push_payload(title, body, event_obj), db=db)
+
+
+def process_scheduled_notifications():
+    if not push_notifications_configured():
+        return
+
+    now = datetime.now(get_app_timezone())
+    with Session(engine) as db:
+        upcoming_events = db.scalars(select(Event).where(Event.status == "upcoming")).all()
+        changed = False
+        for event_obj in upcoming_events:
+            event_time = parse_event_datetime(event_obj)
+            if event_time is None:
+                continue
+
+            if not event_obj.reminder_notification_sent and now >= event_time.replace(minute=event_time.minute, second=0, microsecond=0) - timedelta(hours=1) and now < event_time:
+                send_event_push_to_all(
+                    db,
+                    event_obj,
+                    f"Reminder: {event_obj.title}",
+                    f"{event_obj.title} starts in about 1 hour at {event_obj.time} in {event_obj.location}."
+                )
+                event_obj.reminder_notification_sent = True
+                changed = True
+
+            if not event_obj.start_notification_sent and now >= event_time and now <= event_time + timedelta(minutes=30):
+                send_event_push_to_all(
+                    db,
+                    event_obj,
+                    f"Now Starting: {event_obj.title}",
+                    f"{event_obj.title} is starting now at {event_obj.location}. Open the app for attendance and updates."
+                )
+                event_obj.start_notification_sent = True
+                changed = True
+
+        if changed:
+            db.commit()
+
+
+def start_notification_worker():
+    global notification_worker_started
+    if not push_notifications_configured():
+        return
+    if notification_worker_started:
+        return
+
+    def worker():
+        while True:
+            try:
+                process_scheduled_notifications()
+            except Exception as exc:
+                print(f"Notification worker error: {exc}")
+            time.sleep(60)
+
+    thread = threading.Thread(target=worker, daemon=True, name="sase-notification-worker")
+    thread.start()
+    notification_worker_started = True
 
 
 def row_to_user(user):
@@ -336,18 +434,21 @@ def validate_signup(payload):
 @app.route("/")
 def root():
     init_db()
+    start_notification_worker()
     return send_from_directory(BASE_DIR, "index.html")
 
 
 @app.route("/<path:path>")
 def static_files(path):
     init_db()
+    start_notification_worker()
     return send_from_directory(BASE_DIR, path)
 
 
 @app.get("/api/bootstrap")
 def bootstrap():
     init_db()
+    start_notification_worker()
     return jsonify(get_dashboard_payload(get_current_user(get_db())))
 
 
@@ -410,8 +511,8 @@ def update_profile(user):
     profile_image = str(payload.get("profileImage", "")).strip()
     if not all([name, major, year]) or year not in YEAR_OPTIONS:
         return jsonify({"error": "Please provide a valid name, major, and year."}), 400
-    if profile_image and (not profile_image.startswith("data:image/") or len(profile_image) > 2_000_000):
-        return jsonify({"error": "Please upload a valid image under 2 MB."}), 400
+    if profile_image and (not profile_image.startswith("data:image/") or len(profile_image) > 5_500_000):
+        return jsonify({"error": "Please upload a valid image under 5 MB."}), 400
     db = get_db()
     user.name = name
     user.major = major
@@ -574,8 +675,16 @@ def create_event(user):
     if event_type not in EVENT_TYPES or status not in EVENT_STATUSES or stars < 0:
         return jsonify({"error": "Please provide a valid event type, status, and stars value."}), 400
     db = get_db()
-    db.add(Event(title=title, type=event_type, status=status, date=date, time=time_value, location=location, stars=stars, description=description, created_by=user.id, created_at=utc_now()))
+    event_obj = Event(title=title, type=event_type, status=status, date=date, time=time_value, location=location, stars=stars, description=description, created_by=user.id, created_at=utc_now())
+    db.add(event_obj)
     db.commit()
+    if push_notifications_configured():
+        send_event_push_to_all(
+            db,
+            event_obj,
+            f"New Event: {event_obj.title}",
+            f"{event_obj.title} was just added for {event_obj.date} at {event_obj.time} in {event_obj.location}."
+        )
     return jsonify(get_dashboard_payload(user)), 201
 
 
@@ -597,6 +706,13 @@ def start_checkin(_, event_id):
     event_obj.checkin_active = True
     event_obj.attendance_code = attendance_code
     db.commit()
+    if push_notifications_configured():
+        send_event_push_to_all(
+            db,
+            event_obj,
+            f"Attendance Live: {event_obj.title}",
+            f"Attendance is now open for {event_obj.title}. Open the app and enter today's code."
+        )
     payload = get_dashboard_payload(get_current_user(db))
     payload["checkinLink"] = f"/?checkin={token}"
     return jsonify(payload)
