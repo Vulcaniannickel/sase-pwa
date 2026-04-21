@@ -176,6 +176,7 @@
               </div>
               <div class="hero-actions">
                 <button class="button button-secondary" id="enableNotificationsButton" type="button">Enable Notifications</button>
+                <button class="button button-ghost hidden" id="disableNotificationsButton" type="button">Disable Notifications</button>
               </div>
               <p class="form-note" id="notificationNote" aria-live="polite"></p>
             </div>
@@ -465,6 +466,21 @@
           </div>
         </section>
       </main>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="notificationPromptModal">
+    <div class="modal-card">
+      <p class="eyebrow">Stay Updated</p>
+      <h3>Enable SASE notifications?</h3>
+      <p class="muted-text">
+        Get notified when new events are created, about an hour before events begin, when an event starts,
+        and when attendance goes live.
+      </p>
+      <div class="hero-actions">
+        <button class="button button-primary" id="notificationPromptEnable" type="button">Yes, Enable</button>
+        <button class="button button-secondary" id="notificationPromptLater" type="button">Maybe Later</button>
+      </div>
     </div>
   </div>
 

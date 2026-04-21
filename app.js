@@ -17,6 +17,7 @@ let appState = {
 let deferredPrompt;
 let pendingCheckinToken = new URLSearchParams(window.location.search).get("checkin") || "";
 let pendingProfileImage = "";
+let shouldPromptNotificationsAfterSignup = false;
 
 const authScreen = document.getElementById("authScreen");
 const dashboard = document.getElementById("dashboard");
@@ -46,8 +47,12 @@ const adminNotificationForm = document.getElementById("adminNotificationForm");
 const adminNotificationNote = document.getElementById("adminNotificationNote");
 const notificationEventId = document.getElementById("notificationEventId");
 const enableNotificationsButton = document.getElementById("enableNotificationsButton");
+const disableNotificationsButton = document.getElementById("disableNotificationsButton");
 const notificationNote = document.getElementById("notificationNote");
 const notificationSupportNote = document.getElementById("notificationSupportNote");
+const notificationPromptModal = document.getElementById("notificationPromptModal");
+const notificationPromptEnable = document.getElementById("notificationPromptEnable");
+const notificationPromptLater = document.getElementById("notificationPromptLater");
 const upcomingEventsGrid = document.getElementById("upcomingEventsGrid");
 const completedEventsGrid = document.getElementById("completedEventsGrid");
 const officerGrid = document.getElementById("officerGrid");
@@ -146,6 +151,19 @@ function renderOfficerPhotoPreview(imageUrl, fallbackText = "Officer photo previ
   profilePhotoPreview.innerHTML = imageUrl
     ? `<img src="${imageUrl}" alt="${fallbackText}">`
     : "";
+}
+
+function setNotificationPromptVisibility(visible) {
+  notificationPromptModal?.classList.toggle("hidden", !visible);
+}
+
+async function getCurrentPushSubscription() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    return null;
+  }
+
+  const registration = await navigator.serviceWorker.ready;
+  return registration.pushManager.getSubscription();
 }
 
 function clearCheckinQuery() {
@@ -249,25 +267,32 @@ async function claimPendingCheckin() {
 async function syncNotificationButtonState() {
   const supported = appState.notifications?.supported && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
   enableNotificationsButton.classList.toggle("hidden", !appState.user || !supported);
+  disableNotificationsButton.classList.toggle("hidden", true);
 
   if (!appState.user) {
     notificationSupportNote.textContent = "Notifications: log in and install the PWA to enable event reminders and updates.";
     notificationNote.textContent = "";
+    setNotificationPromptVisibility(false);
     return;
   }
 
   if (!supported) {
     notificationSupportNote.textContent = "Notifications: this browser or deployment does not have push notifications ready yet.";
     notificationNote.textContent = "";
+    setNotificationPromptVisibility(false);
     return;
   }
 
   notificationSupportNote.textContent = "Notifications: install the PWA and allow notifications to get event reminders, location changes, attendance alerts, and updates.";
 
   const permission = Notification.permission;
-  if (permission === "granted") {
+  const subscription = await getCurrentPushSubscription();
+  const subscribed = Boolean(subscription);
+  if (permission === "granted" && subscribed) {
     enableNotificationsButton.textContent = "Notifications Enabled";
     enableNotificationsButton.disabled = true;
+    disableNotificationsButton.classList.remove("hidden");
+    disableNotificationsButton.disabled = false;
     notificationNote.textContent = "This device is ready to receive SASE notifications.";
   } else if (permission === "denied") {
     enableNotificationsButton.textContent = "Notifications Blocked";
@@ -316,6 +341,28 @@ async function enableNotifications() {
   await syncNotificationButtonState();
 }
 
+async function disableNotifications() {
+  const subscription = await getCurrentPushSubscription();
+  if (!subscription) {
+    notificationNote.textContent = "Notifications are already off for this device.";
+    await syncNotificationButtonState();
+    return;
+  }
+
+  try {
+    await apiFetch("/api/notifications/unsubscribe", {
+      method: "POST",
+      body: JSON.stringify({ endpoint: subscription.endpoint })
+    });
+    await subscription.unsubscribe();
+    notificationNote.textContent = "Notifications turned off for this device.";
+  } catch (error) {
+    notificationNote.textContent = error.message;
+  }
+
+  await syncNotificationButtonState();
+}
+
 authTabButtons.forEach((button) => {
   button.addEventListener("click", () => showAuthView(button.dataset.authView));
 });
@@ -333,6 +380,20 @@ navButtons.forEach((button) => {
 
 enableNotificationsButton.addEventListener("click", async () => {
   await enableNotifications();
+});
+
+disableNotificationsButton.addEventListener("click", async () => {
+  await disableNotifications();
+});
+
+notificationPromptEnable?.addEventListener("click", async () => {
+  setNotificationPromptVisibility(false);
+  await enableNotifications();
+});
+
+notificationPromptLater?.addEventListener("click", () => {
+  setNotificationPromptVisibility(false);
+  notificationNote.textContent = "You can enable notifications anytime from the Home tab.";
 });
 
 completedEventsFilter?.addEventListener("input", () => {
@@ -418,8 +479,13 @@ signupForm.addEventListener("submit", async (event) => {
     signupForm.reset();
     updateSignupRoleFields();
     await claimPendingCheckin();
+    shouldPromptNotificationsAfterSignup = true;
     renderApp();
     await syncNotificationButtonState();
+    if (shouldPromptNotificationsAfterSignup && Notification.permission === "default") {
+      setNotificationPromptVisibility(true);
+      shouldPromptNotificationsAfterSignup = false;
+    }
   } catch (error) {
     signupNote.textContent = error.message;
   }
@@ -541,10 +607,12 @@ logoutButton.addEventListener("click", async () => {
   adminNotificationNote.textContent = "";
   liveCheckinNote.textContent = "";
   pendingProfileImage = "";
+  shouldPromptNotificationsAfterSignup = false;
   if (profilePhotoInput) {
     profilePhotoInput.value = "";
   }
   renderOfficerPhotoPreview("");
+  setNotificationPromptVisibility(false);
   renderApp();
   await loadCheckinPrompt();
   await syncNotificationButtonState();
