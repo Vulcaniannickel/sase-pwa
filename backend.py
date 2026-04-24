@@ -6,12 +6,14 @@ import secrets
 import smtplib
 import threading
 import time
+from base64 import urlsafe_b64encode
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from functools import wraps
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from flask import Flask, g, jsonify, request, send_from_directory, session as flask_session
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, event, func, inspect, select, text
 from sqlalchemy.engine import Engine
@@ -49,6 +51,21 @@ PUSH_DEBUG_FLAG = os.environ.get("PUSH_DEBUG_FLAG", "")
 YEAR_OPTIONS = {"First Year", "Second Year", "Third Year", "Fourth Year", "Graduate"}
 EVENT_TYPES = {"Social", "GBM", "Professional", "Workshop"}
 EVENT_STATUSES = {"upcoming", "completed"}
+
+
+def normalize_vapid_private_key(private_key: str) -> str:
+    candidate = (private_key or "").strip()
+    if not candidate:
+        return ""
+    if "BEGIN PRIVATE KEY" not in candidate:
+        return candidate
+
+    private_obj = load_pem_private_key(candidate.encode("utf-8"), password=None)
+    raw_private = private_obj.private_numbers().private_value.to_bytes(32, "big")
+    return urlsafe_b64encode(raw_private).decode("utf-8").rstrip("=")
+
+
+VAPID_PRIVATE_KEY = normalize_vapid_private_key(VAPID_PRIVATE_KEY)
 
 app = Flask(__name__, static_folder=".")
 app.config["SECRET_KEY"] = SECRET_KEY
