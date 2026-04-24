@@ -172,6 +172,7 @@ function getNotificationSupportDiagnostics() {
   const hasNotificationApi = "Notification" in window;
   const isStandalone = window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator.standalone === true;
   const isiPhone = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const notificationDebug = appState.notifications?.debug || {};
 
   const checks = [
     `deployment ${deploymentReady ? "ready" : "not ready"}`,
@@ -180,6 +181,12 @@ function getNotificationSupportDiagnostics() {
     `notifications api ${hasNotificationApi ? "yes" : "no"}`,
     `${isiPhone ? "home screen app" : "standalone mode"} ${isStandalone ? "yes" : "no"}`
   ];
+
+  if (!deploymentReady) {
+    checks.push(`server webpush ${notificationDebug.webpushLoaded ? "yes" : "no"}`);
+    checks.push(`server public key ${notificationDebug.hasPublicKey ? "yes" : "no"}`);
+    checks.push(`server private key ${notificationDebug.hasPrivateKey ? "yes" : "no"}`);
+  }
 
   if (isiPhone && !isStandalone) {
     checks.push("open from the Home Screen icon");

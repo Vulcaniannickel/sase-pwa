@@ -211,6 +211,18 @@ def push_notifications_configured():
     return webpush is not None and bool(VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY)
 
 
+def push_notifications_status():
+    return {
+        "supported": push_notifications_configured(),
+        "publicKey": VAPID_PUBLIC_KEY,
+        "debug": {
+            "webpushLoaded": webpush is not None,
+            "hasPublicKey": bool(VAPID_PUBLIC_KEY),
+            "hasPrivateKey": bool(VAPID_PRIVATE_KEY),
+        },
+    }
+
+
 def email_configured():
     return bool(SMTP_HOST and SMTP_FROM_EMAIL)
 
@@ -419,7 +431,7 @@ def get_dashboard_payload(user):
         "officers": get_officers(db),
         "liveCheckinEvent": build_live_checkin_event(live_event),
         "adminLiveCheckinEvent": build_live_checkin_event(live_event, include_code=True) if user and user.role == "officer" else None,
-        "notifications": {"supported": push_notifications_configured(), "publicKey": VAPID_PUBLIC_KEY},
+        "notifications": push_notifications_status(),
         "leaderboard": [{"name": entry.name, "major": entry.major, "year": entry.year, "stars": entry.stars} for entry in leaderboard_users],
         "adminData": build_admin_data() if user and user.role == "officer" else None,
     }
