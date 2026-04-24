@@ -44,6 +44,8 @@ SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL", "")
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "").rstrip("/")
+RENDER_SERVICE_NAME = os.environ.get("RENDER_SERVICE_NAME", "")
+PUSH_DEBUG_FLAG = os.environ.get("PUSH_DEBUG_FLAG", "")
 YEAR_OPTIONS = {"First Year", "Second Year", "Third Year", "Fourth Year", "Graduate"}
 EVENT_TYPES = {"Social", "GBM", "Professional", "Workshop"}
 EVENT_STATUSES = {"upcoming", "completed"}
@@ -219,6 +221,8 @@ def push_notifications_status():
             "webpushLoaded": webpush is not None,
             "hasPublicKey": bool(VAPID_PUBLIC_KEY),
             "hasPrivateKey": bool(VAPID_PRIVATE_KEY),
+            "renderService": RENDER_SERVICE_NAME,
+            "debugFlag": PUSH_DEBUG_FLAG,
         },
     }
 

@@ -186,6 +186,12 @@ function getNotificationSupportDiagnostics() {
     checks.push(`server webpush ${notificationDebug.webpushLoaded ? "yes" : "no"}`);
     checks.push(`server public key ${notificationDebug.hasPublicKey ? "yes" : "no"}`);
     checks.push(`server private key ${notificationDebug.hasPrivateKey ? "yes" : "no"}`);
+    if (notificationDebug.renderService) {
+      checks.push(`render service ${notificationDebug.renderService}`);
+    }
+    if (notificationDebug.debugFlag) {
+      checks.push(`debug flag ${notificationDebug.debugFlag}`);
+    }
   }
 
   if (isiPhone && !isStandalone) {
