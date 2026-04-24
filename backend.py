@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import smtplib
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from functools import wraps
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -36,6 +38,12 @@ VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
 VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
 VAPID_CLAIMS_SUBJECT = os.environ.get("VAPID_CLAIMS_SUBJECT", "mailto:ryankreger364@gmail.com")
 APP_TIMEZONE = os.environ.get("APP_TIMEZONE", "America/New_York")
+SMTP_HOST = os.environ.get("SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL", "")
+APP_BASE_URL = os.environ.get("APP_BASE_URL", "").rstrip("/")
 YEAR_OPTIONS = {"First Year", "Second Year", "Third Year", "Fourth Year", "Graduate"}
 EVENT_TYPES = {"Social", "GBM", "Professional", "Workshop"}
 EVENT_STATUSES = {"upcoming", "completed"}
@@ -64,6 +72,8 @@ class User(Base):
     eligible_for_leaderboard: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     bio: Mapped[str | None] = mapped_column(Text)
     profile_image: Mapped[str | None] = mapped_column(Text)
+    reset_token: Mapped[str | None] = mapped_column(String(255))
+    reset_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_events: Mapped[list["Event"]] = relationship(back_populates="creator")
     interests: Mapped[list["EventInterest"]] = relationship(back_populates="user", cascade="all, delete-orphan")
@@ -182,6 +192,8 @@ def ensure_column(table_name, column_name, column_sql):
 def init_db():
     Base.metadata.create_all(engine)
     ensure_column("users", "profile_image", "TEXT")
+    ensure_column("users", "reset_token", "VARCHAR(255)")
+    ensure_column("users", "reset_token_expires_at", "TIMESTAMP")
     ensure_column("events", "reminder_notification_sent", "BOOLEAN DEFAULT FALSE NOT NULL")
     ensure_column("events", "start_notification_sent", "BOOLEAN DEFAULT FALSE NOT NULL")
     with Session(engine) as db:
@@ -197,6 +209,10 @@ def init_db():
 
 def push_notifications_configured():
     return webpush is not None and bool(VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY)
+
+
+def email_configured():
+    return bool(SMTP_HOST and SMTP_FROM_EMAIL)
 
 
 def get_app_timezone():
@@ -255,6 +271,33 @@ def send_event_push_to_all(db, event_obj, title, body):
     if not rows:
         return 0, 0
     return send_push_to_rows(rows, build_push_payload(title, body, event_obj), db=db)
+
+
+def send_password_reset_email(recipient_email, reset_token, base_url=""):
+    reset_base = base_url.rstrip("/") or APP_BASE_URL
+    if not reset_base:
+      return False
+    reset_link = f"{reset_base}/?reset={reset_token}"
+    if not email_configured():
+        print(f"Password reset link for {recipient_email}: {reset_link}")
+        return True
+
+    message = EmailMessage()
+    message["Subject"] = "Reset your UCF SASE password"
+    message["From"] = SMTP_FROM_EMAIL
+    message["To"] = recipient_email
+    message.set_content(
+        "We received a request to reset your UCF SASE password.\n\n"
+        f"Open this link to choose a new password:\n{reset_link}\n\n"
+        "If you did not request this reset, you can ignore this email."
+    )
+
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
+        smtp.starttls()
+        if SMTP_USERNAME and SMTP_PASSWORD:
+            smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
+        smtp.send_message(message)
+    return True
 
 
 def process_scheduled_notifications():
@@ -485,6 +528,53 @@ def login():
         return jsonify({"error": "We could not match that email and password."}), 401
     flask_session["user_id"] = user.id
     return jsonify(get_dashboard_payload(user))
+
+
+@app.post("/api/auth/forgot-password")
+def forgot_password():
+    init_db()
+    payload = request.get_json(silent=True) or {}
+    email = str(payload.get("email", "")).strip().lower()
+    response = {"message": "If an account exists for that email, a reset link has been sent."}
+    if not email:
+        return jsonify(response)
+
+    db = get_db()
+    user = db.scalar(select(User).where(User.email == email))
+    if user is None:
+        return jsonify(response)
+
+    user.reset_token = secrets.token_urlsafe(32)
+    user.reset_token_expires_at = utc_now() + timedelta(hours=1)
+    db.commit()
+
+    try:
+        send_password_reset_email(user.email, user.reset_token, request.url_root.rstrip("/"))
+    except Exception as exc:
+        print(f"Password reset email error: {exc}")
+
+    return jsonify(response)
+
+
+@app.post("/api/auth/reset-password")
+def reset_password():
+    init_db()
+    payload = request.get_json(silent=True) or {}
+    token = str(payload.get("token", "")).strip()
+    new_password = str(payload.get("password", ""))
+    if not token or len(new_password) < 6:
+        return jsonify({"error": "A valid reset token and password are required."}), 400
+
+    db = get_db()
+    user = db.scalar(select(User).where(User.reset_token == token))
+    if user is None or user.reset_token_expires_at is None or user.reset_token_expires_at < utc_now():
+        return jsonify({"error": "That reset link is invalid or has expired."}), 400
+
+    user.password_hash = generate_password_hash(new_password)
+    user.reset_token = None
+    user.reset_token_expires_at = None
+    db.commit()
+    return jsonify({"message": "Your password has been reset. You can log in now."})
 
 
 @app.post("/api/auth/logout")

@@ -16,6 +16,7 @@ let appState = {
 };
 let deferredPrompt;
 let pendingCheckinToken = new URLSearchParams(window.location.search).get("checkin") || "";
+let pendingResetToken = new URLSearchParams(window.location.search).get("reset") || "";
 let pendingProfileImage = "";
 let shouldPromptNotificationsAfterSignup = false;
 
@@ -25,7 +26,12 @@ const checkinPrompt = document.getElementById("checkinPrompt");
 const checkinPromptEvent = document.getElementById("checkinPromptEvent");
 const checkinStatusBanner = document.getElementById("checkinStatusBanner");
 const loginForm = document.getElementById("loginForm");
+const forgotPasswordForm = document.getElementById("forgotPasswordForm");
+const resetPasswordForm = document.getElementById("resetPasswordForm");
 const signupForm = document.getElementById("signupForm");
+const showForgotPasswordButton = document.getElementById("showForgotPasswordButton");
+const backToLoginButton = document.getElementById("backToLoginButton");
+const backToLoginFromResetButton = document.getElementById("backToLoginFromResetButton");
 const signupRoleSelect = document.getElementById("signupRoleSelect");
 const signupOfficerInviteField = document.getElementById("signupOfficerInviteField");
 const signupOfficerInviteInput = document.getElementById("signupOfficerInviteInput");
@@ -34,6 +40,8 @@ const signupOfficerPositionInput = document.getElementById("signupOfficerPositio
 const signupOfficerBioField = document.getElementById("signupOfficerBioField");
 const signupOfficerBioInput = document.getElementById("signupOfficerBioInput");
 const loginNote = document.getElementById("loginNote");
+const forgotPasswordNote = document.getElementById("forgotPasswordNote");
+const resetPasswordNote = document.getElementById("resetPasswordNote");
 const signupNote = document.getElementById("signupNote");
 const profileForm = document.getElementById("profileForm");
 const profileNote = document.getElementById("profileNote");
@@ -172,6 +180,40 @@ function clearCheckinQuery() {
   window.history.replaceState({}, "", url);
 }
 
+function clearResetQuery() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("reset");
+  window.history.replaceState({}, "", url);
+}
+
+function parseEventDateTime(dateText, timeText) {
+  const currentYear = new Date().getFullYear();
+  const candidates = [
+    `${dateText} ${currentYear} ${timeText}`,
+    `${dateText.replace(",", "")} ${currentYear} ${timeText}`
+  ];
+  const formats = candidates.map((value) => new Date(value));
+  return formats.find((value) => !Number.isNaN(value.getTime())) || null;
+}
+
+function buildGoogleCalendarUrl(eventRecord) {
+  const start = parseEventDateTime(eventRecord.date, eventRecord.time);
+  if (!start) {
+    return "";
+  }
+
+  const end = new Date(start.getTime() + 90 * 60 * 1000);
+  const toGoogleStamp = (value) => value.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+  const params = new URLSearchParams({
+    action: "TEMPLATE",
+    text: eventRecord.title,
+    dates: `${toGoogleStamp(start)}/${toGoogleStamp(end)}`,
+    details: eventRecord.description,
+    location: eventRecord.location
+  });
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
+}
+
 function setBanner(message) {
   appState.checkinMessage = message || "";
   checkinStatusBanner.textContent = appState.checkinMessage;
@@ -183,10 +225,36 @@ function showAuthView(target) {
     button.classList.toggle("active", button.dataset.authView === target);
   });
   loginForm.classList.toggle("hidden", target !== "login");
+  forgotPasswordForm.classList.add("hidden");
+  resetPasswordForm.classList.add("hidden");
   signupForm.classList.toggle("hidden", target !== "signup");
   loginNote.textContent = "";
+  forgotPasswordNote.textContent = "";
+  resetPasswordNote.textContent = "";
   signupNote.textContent = "";
   updateSignupRoleFields();
+}
+
+function showForgotPasswordView() {
+  authTabButtons.forEach((button) => button.classList.remove("active"));
+  loginForm.classList.add("hidden");
+  signupForm.classList.add("hidden");
+  resetPasswordForm.classList.add("hidden");
+  forgotPasswordForm.classList.remove("hidden");
+  loginNote.textContent = "";
+  forgotPasswordNote.textContent = "";
+  resetPasswordNote.textContent = "";
+}
+
+function showResetPasswordView() {
+  authTabButtons.forEach((button) => button.classList.remove("active"));
+  loginForm.classList.add("hidden");
+  signupForm.classList.add("hidden");
+  forgotPasswordForm.classList.add("hidden");
+  resetPasswordForm.classList.remove("hidden");
+  loginNote.textContent = "";
+  forgotPasswordNote.textContent = "";
+  resetPasswordNote.textContent = "";
 }
 
 function updateSignupRoleFields() {
@@ -367,6 +435,20 @@ authTabButtons.forEach((button) => {
   button.addEventListener("click", () => showAuthView(button.dataset.authView));
 });
 
+showForgotPasswordButton?.addEventListener("click", () => {
+  showForgotPasswordView();
+});
+
+backToLoginButton?.addEventListener("click", () => {
+  showAuthView("login");
+});
+
+backToLoginFromResetButton?.addEventListener("click", () => {
+  pendingResetToken = "";
+  clearResetQuery();
+  showAuthView("login");
+});
+
 signupRoleSelect?.addEventListener("change", updateSignupRoleFields);
 
 navButtons.forEach((button) => {
@@ -488,6 +570,60 @@ signupForm.addEventListener("submit", async (event) => {
     }
   } catch (error) {
     signupNote.textContent = error.message;
+  }
+});
+
+forgotPasswordForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  forgotPasswordNote.textContent = "";
+  const formData = new FormData(forgotPasswordForm);
+
+  try {
+    const data = await apiFetch("/api/auth/forgot-password", {
+      method: "POST",
+      body: JSON.stringify({
+        email: String(formData.get("email") || "").trim()
+      })
+    });
+    forgotPasswordNote.textContent = data.message || "If an account exists, a reset link has been sent.";
+    forgotPasswordForm.reset();
+  } catch (error) {
+    forgotPasswordNote.textContent = error.message;
+  }
+});
+
+resetPasswordForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  resetPasswordNote.textContent = "";
+  const formData = new FormData(resetPasswordForm);
+  const password = String(formData.get("password") || "");
+  const confirmPassword = String(formData.get("confirmPassword") || "");
+
+  if (!pendingResetToken) {
+    resetPasswordNote.textContent = "That reset link is missing or invalid.";
+    return;
+  }
+
+  if (password !== confirmPassword) {
+    resetPasswordNote.textContent = "Passwords do not match.";
+    return;
+  }
+
+  try {
+    const data = await apiFetch("/api/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify({
+        token: pendingResetToken,
+        password
+      })
+    });
+    resetPasswordForm.reset();
+    pendingResetToken = "";
+    clearResetQuery();
+    showAuthView("login");
+    loginNote.textContent = data.message || "Your password has been reset. You can log in now.";
+  } catch (error) {
+    resetPasswordNote.textContent = error.message;
   }
 });
 
@@ -727,6 +863,7 @@ function renderEventCard(eventRecord) {
   if (eventRecord.status !== "completed") {
     const actionRow = document.createElement("div");
     actionRow.className = "event-actions";
+    const calendarUrl = buildGoogleCalendarUrl(eventRecord);
     actionRow.innerHTML = `
       <button class="button ${eventRecord.isInterested ? "button-soft" : "button-secondary"}" type="button">
         ${eventRecord.isInterested ? "Interested" : "I'm Interested"}
@@ -734,6 +871,7 @@ function renderEventCard(eventRecord) {
       <button class="button ${eventRecord.isRsvped ? "button-primary" : "button-ghost"}" type="button">
         ${eventRecord.isRsvped ? "RSVP'd" : "RSVP"}
       </button>
+      ${calendarUrl ? `<a class="button button-secondary" href="${calendarUrl}" target="_blank" rel="noreferrer">Add to Google Calendar</a>` : ""}
     `;
     const buttons = actionRow.querySelectorAll("button");
     buttons[0].addEventListener("click", () => toggleInterest(eventRecord.id));
@@ -1148,7 +1286,11 @@ function renderApp() {
     renderDashboard();
     showTab("home");
   } else {
-    showAuthView("login");
+    if (pendingResetToken) {
+      showResetPasswordView();
+    } else {
+      showAuthView("login");
+    }
   }
 }
 

@@ -58,7 +58,32 @@
             <input type="password" name="password" placeholder="Enter your password" required>
           </label>
           <button class="button button-primary" type="submit">Log In</button>
+          <button class="button button-ghost" id="showForgotPasswordButton" type="button">Forgot Password?</button>
           <p class="form-note" id="loginNote" aria-live="polite"></p>
+        </form>
+
+        <form id="forgotPasswordForm" class="auth-form hidden">
+          <label>
+            Account email
+            <input type="email" name="email" placeholder="member@campus.edu" required>
+          </label>
+          <button class="button button-primary" type="submit">Send Reset Link</button>
+          <button class="button button-secondary" id="backToLoginButton" type="button">Back to Login</button>
+          <p class="form-note" id="forgotPasswordNote" aria-live="polite"></p>
+        </form>
+
+        <form id="resetPasswordForm" class="auth-form hidden">
+          <label>
+            New password
+            <input type="password" name="password" placeholder="Enter a new password" required>
+          </label>
+          <label>
+            Confirm password
+            <input type="password" name="confirmPassword" placeholder="Confirm your new password" required>
+          </label>
+          <button class="button button-primary" type="submit">Reset Password</button>
+          <button class="button button-secondary" id="backToLoginFromResetButton" type="button">Back to Login</button>
+          <p class="form-note" id="resetPasswordNote" aria-live="polite"></p>
         </form>
 
         <form id="signupForm" class="auth-form hidden">

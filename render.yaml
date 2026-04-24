@@ -24,3 +24,17 @@ services:
         sync: false
       - key: VAPID_CLAIMS_SUBJECT
         value: mailto:ryankreger364@gmail.com
+      - key: APP_BASE_URL
+        sync: false
+      - key: APP_TIMEZONE
+        value: America/New_York
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM_EMAIL
+        sync: false
