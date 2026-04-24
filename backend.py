@@ -276,8 +276,12 @@ def send_push_to_rows(rows, payload, db=None):
             delivered += 1
         except WebPushException as exc:
             failed += 1
+            print(f"Web push error for {row.endpoint}: {exc}")
             if getattr(getattr(exc, "response", None), "status_code", None) in {404, 410}:
                 active_db.delete(row)
+        except Exception as exc:
+            failed += 1
+            print(f"Unexpected web push error for {row.endpoint}: {exc!r}")
     active_db.commit()
     return delivered, failed
 
