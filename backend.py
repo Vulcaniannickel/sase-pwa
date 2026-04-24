@@ -294,10 +294,12 @@ def send_push_to_rows(rows, payload, db=None):
             delivered += 1
         except WebPushException as exc:
             failed += 1
-            print(f"Web push error for {row.endpoint}: {exc}")
+            error_text = str(exc)
+            print(f"Web push error for {row.endpoint}: {error_text}")
             if len(errors) < 3:
-                errors.append(str(exc))
-            if getattr(getattr(exc, "response", None), "status_code", None) in {404, 410}:
+                errors.append(error_text)
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            if status_code in {404, 410} or "VapidPkHashMismatch" in error_text or "do not correspond to the credentials used to create the subscriptions" in error_text:
                 active_db.delete(row)
         except Exception as exc:
             failed += 1
