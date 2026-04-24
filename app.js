@@ -165,6 +165,29 @@ function setNotificationPromptVisibility(visible) {
   notificationPromptModal?.classList.toggle("hidden", !visible);
 }
 
+function getNotificationSupportDiagnostics() {
+  const deploymentReady = Boolean(appState.notifications?.supported);
+  const hasServiceWorker = "serviceWorker" in navigator;
+  const hasPushManager = "PushManager" in window;
+  const hasNotificationApi = "Notification" in window;
+  const isStandalone = window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator.standalone === true;
+  const isiPhone = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+  const checks = [
+    `deployment ${deploymentReady ? "ready" : "not ready"}`,
+    `service worker ${hasServiceWorker ? "yes" : "no"}`,
+    `push api ${hasPushManager ? "yes" : "no"}`,
+    `notifications api ${hasNotificationApi ? "yes" : "no"}`,
+    `${isiPhone ? "home screen app" : "standalone mode"} ${isStandalone ? "yes" : "no"}`
+  ];
+
+  if (isiPhone && !isStandalone) {
+    checks.push("open from the Home Screen icon");
+  }
+
+  return checks.join(" • ");
+}
+
 async function getCurrentPushSubscription() {
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
     return null;
@@ -345,7 +368,7 @@ async function syncNotificationButtonState() {
   }
 
   if (!supported) {
-    notificationSupportNote.textContent = "Notifications: this browser or deployment does not have push notifications ready yet.";
+    notificationSupportNote.textContent = `Notifications: not ready yet. ${getNotificationSupportDiagnostics()}.`;
     notificationNote.textContent = "";
     setNotificationPromptVisibility(false);
     return;
