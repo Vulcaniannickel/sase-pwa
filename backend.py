@@ -266,10 +266,11 @@ def build_push_payload(title, body, event_obj=None):
 
 def send_push_to_rows(rows, payload, db=None):
     if not push_notifications_configured() or webpush is None:
-        return 0, 0
+        return 0, 0, []
     active_db = db or get_db()
     delivered = 0
     failed = 0
+    errors = []
     for row in rows:
         try:
             webpush(subscription_info={"endpoint": row.endpoint, "keys": {"p256dh": row.p256dh, "auth": row.auth}}, data=payload, vapid_private_key=VAPID_PRIVATE_KEY, vapid_claims={"sub": VAPID_CLAIMS_SUBJECT})
@@ -277,19 +278,23 @@ def send_push_to_rows(rows, payload, db=None):
         except WebPushException as exc:
             failed += 1
             print(f"Web push error for {row.endpoint}: {exc}")
+            if len(errors) < 3:
+                errors.append(str(exc))
             if getattr(getattr(exc, "response", None), "status_code", None) in {404, 410}:
                 active_db.delete(row)
         except Exception as exc:
             failed += 1
             print(f"Unexpected web push error for {row.endpoint}: {exc!r}")
+            if len(errors) < 3:
+                errors.append(repr(exc))
     active_db.commit()
-    return delivered, failed
+    return delivered, failed, errors
 
 
 def send_event_push_to_all(db, event_obj, title, body):
     rows = db.scalars(select(PushSubscription).order_by(PushSubscription.created_at.desc())).all()
     if not rows:
-        return 0, 0
+        return 0, 0, []
     return send_push_to_rows(rows, build_push_payload(title, body, event_obj), db=db)
 
 
@@ -907,9 +912,9 @@ def notify_event_members(_, event_id):
                 recipients[subscription.endpoint] = subscription
     title_map = {"reminder": f"Reminder: {event_obj.title}", "location": f"Location update: {event_obj.title}", "update": f"Update: {event_obj.title}", "checkin": f"Attendance live: {event_obj.title}"}
     default_message_map = {"reminder": f"{event_obj.title} starts on {event_obj.date} at {event_obj.time} in {event_obj.location}.", "location": f"The location for {event_obj.title} is now {event_obj.location}.", "update": f"There is a new update for {event_obj.title}. Open the SASE app for details.", "checkin": f"Attendance is now live for {event_obj.title}. Open the app and enter today's attendance code."}
-    delivered, failed = send_push_to_rows(list(recipients.values()), build_push_payload(title_map[notification_type], custom_message or default_message_map[notification_type], event_obj))
+    delivered, failed, errors = send_push_to_rows(list(recipients.values()), build_push_payload(title_map[notification_type], custom_message or default_message_map[notification_type], event_obj))
     response = get_dashboard_payload(get_current_user(db))
-    response["notificationSummary"] = {"sent": delivered, "failed": failed, "audience": audience, "type": notification_type}
+    response["notificationSummary"] = {"sent": delivered, "failed": failed, "audience": audience, "type": notification_type, "errors": errors}
     return jsonify(response)
 
 

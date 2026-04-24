@@ -754,7 +754,8 @@ adminNotificationForm.addEventListener("submit", async (event) => {
     });
     appState = data;
     const summary = data.notificationSummary;
-    adminNotificationNote.textContent = `Notification sent to ${summary.sent} members${summary.failed ? `, with ${summary.failed} failed device(s)` : ""}.`;
+    const errorDetails = summary.errors?.length ? ` ${summary.errors.join(" | ")}` : "";
+    adminNotificationNote.textContent = `Notification sent to ${summary.sent} members${summary.failed ? `, with ${summary.failed} failed device(s)` : ""}.${errorDetails}`;
     renderDashboard();
   } catch (error) {
     adminNotificationNote.textContent = error.message;
