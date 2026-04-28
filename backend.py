@@ -14,7 +14,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
-from flask import Flask, g, jsonify, request, send_from_directory, session as flask_session
+from flask import Flask, g, jsonify, redirect, request, send_from_directory, session as flask_session
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, event, func, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
@@ -26,6 +26,11 @@ try:
 except ImportError:
     WebPushException = Exception
     webpush = None
+
+try:
+    import resend
+except ImportError:
+    resend = None
 
 BASE_DIR = Path(__file__).resolve().parent
 raw_db_url = os.environ.get("DATABASE_URL", "").strip()
@@ -45,6 +50,9 @@ SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL", "")
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+RESEND_FROM_EMAIL = os.environ.get("RESEND_FROM_EMAIL", "")
+RESEND_REPLY_TO = os.environ.get("RESEND_REPLY_TO", "")
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "").rstrip("/")
 RENDER_SERVICE_NAME = os.environ.get("RENDER_SERVICE_NAME", "")
 PUSH_DEBUG_FLAG = os.environ.get("PUSH_DEBUG_FLAG", "")
@@ -91,6 +99,9 @@ class User(Base):
     eligible_for_leaderboard: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     bio: Mapped[str | None] = mapped_column(Text)
     profile_image: Mapped[str | None] = mapped_column(Text)
+    email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    verification_token: Mapped[str | None] = mapped_column(String(255))
+    verification_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reset_token: Mapped[str | None] = mapped_column(String(255))
     reset_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -211,6 +222,9 @@ def ensure_column(table_name, column_name, column_sql):
 def init_db():
     Base.metadata.create_all(engine)
     ensure_column("users", "profile_image", "TEXT")
+    ensure_column("users", "email_verified", "BOOLEAN DEFAULT TRUE NOT NULL")
+    ensure_column("users", "verification_token", "VARCHAR(255)")
+    ensure_column("users", "verification_token_expires_at", "TIMESTAMP")
     ensure_column("users", "reset_token", "VARCHAR(255)")
     ensure_column("users", "reset_token_expires_at", "TIMESTAMP")
     ensure_column("events", "reminder_notification_sent", "BOOLEAN DEFAULT FALSE NOT NULL")
@@ -244,8 +258,51 @@ def push_notifications_status():
     }
 
 
+def resend_configured():
+    return resend is not None and bool(RESEND_API_KEY and RESEND_FROM_EMAIL)
+
+
 def email_configured():
     return bool(SMTP_HOST and SMTP_FROM_EMAIL)
+
+
+def build_app_base_url(base_url=""):
+    return (base_url.rstrip("/") or APP_BASE_URL).rstrip("/")
+
+
+def send_transactional_email(recipient_email, subject, html, text_content=""):
+    if resend_configured():
+        resend.api_key = RESEND_API_KEY
+        params = {
+            "from": RESEND_FROM_EMAIL,
+            "to": [recipient_email],
+            "subject": subject,
+            "html": html,
+            "text": text_content or "",
+        }
+        if RESEND_REPLY_TO:
+            params["reply_to"] = RESEND_REPLY_TO
+        resend.Emails.send(params)
+        return True
+
+    if email_configured():
+        message = EmailMessage()
+        message["Subject"] = subject
+        message["From"] = SMTP_FROM_EMAIL
+        message["To"] = recipient_email
+        if text_content:
+            message.set_content(text_content)
+            message.add_alternative(html, subtype="html")
+        else:
+            message.set_content(html)
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
+            smtp.starttls()
+            if SMTP_USERNAME and SMTP_PASSWORD:
+                smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
+            smtp.send_message(message)
+        return True
+
+    return False
 
 
 def get_app_timezone():
@@ -318,29 +375,44 @@ def send_event_push_to_all(db, event_obj, title, body):
 
 
 def send_password_reset_email(recipient_email, reset_token, base_url=""):
-    reset_base = base_url.rstrip("/") or APP_BASE_URL
+    reset_base = build_app_base_url(base_url)
     if not reset_base:
-      return False
+        return False
     reset_link = f"{reset_base}/?reset={reset_token}"
-    if not email_configured():
-        print(f"Password reset link for {recipient_email}: {reset_link}")
-        return True
-
-    message = EmailMessage()
-    message["Subject"] = "Reset your UCF SASE password"
-    message["From"] = SMTP_FROM_EMAIL
-    message["To"] = recipient_email
-    message.set_content(
+    html = (
+        "<p>We received a request to reset your UCF SASE password.</p>"
+        f"<p><a href=\"{reset_link}\">Reset your password</a></p>"
+        "<p>This link expires in 1 hour.</p>"
+    )
+    text = (
         "We received a request to reset your UCF SASE password.\n\n"
         f"Open this link to choose a new password:\n{reset_link}\n\n"
         "If you did not request this reset, you can ignore this email."
     )
+    if not send_transactional_email(recipient_email, "Reset your UCF SASE password", html, text):
+        print(f"Password reset link for {recipient_email}: {reset_link}")
+    return True
 
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
-        smtp.starttls()
-        if SMTP_USERNAME and SMTP_PASSWORD:
-            smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
-        smtp.send_message(message)
+
+def send_verification_email(recipient_email, verification_token, base_url=""):
+    verify_base = build_app_base_url(base_url)
+    if not verify_base:
+        return False
+    verify_link = f"{verify_base}/api/auth/verify-email?token={verification_token}"
+    html = (
+        "<p>Welcome to UCF SASE.</p>"
+        "<p>Please verify your email to activate your account.</p>"
+        f"<p><a href=\"{verify_link}\">Verify your email</a></p>"
+        "<p>This link expires in 48 hours.</p>"
+    )
+    text = (
+        "Welcome to UCF SASE.\n\n"
+        "Please verify your email to activate your account.\n\n"
+        f"Verify your email: {verify_link}\n\n"
+        "This link expires in 48 hours."
+    )
+    if not send_transactional_email(recipient_email, "Verify your UCF SASE account", html, text):
+        print(f"Verification link for {recipient_email}: {verify_link}")
     return True
 
 
@@ -402,7 +474,7 @@ def start_notification_worker():
 
 
 def row_to_user(user):
-    return {"id": user.id, "name": user.name, "email": user.email, "major": user.major, "year": user.year, "role": user.role, "position": user.position or "", "stars": user.stars, "eligibleForLeaderboard": bool(user.eligible_for_leaderboard), "bio": user.bio or "", "profileImage": user.profile_image or ""}
+    return {"id": user.id, "name": user.name, "email": user.email, "major": user.major, "year": user.year, "role": user.role, "position": user.position or "", "stars": user.stars, "eligibleForLeaderboard": bool(user.eligible_for_leaderboard), "bio": user.bio or "", "profileImage": user.profile_image or "", "emailVerified": bool(user.email_verified)}
 
 
 def serialize_event(event_obj, current_user_id=None):
@@ -445,7 +517,7 @@ def build_admin_data():
     subscriptions = db.scalars(select(PushSubscription).order_by(PushSubscription.created_at.desc())).all()
     return {
         "stats": {"users": len(users), "members": sum(1 for user in users if user.role == "member"), "officers": sum(1 for user in users if user.role == "officer"), "events": len(events), "liveCheckins": sum(1 for event_obj in events if event_obj.checkin_active), "subscriptions": len(subscriptions), "rsvps": sum(len(event_obj.rsvps) for event_obj in events), "interests": sum(len(event_obj.interests) for event_obj in events), "attendance": sum(len(event_obj.attendance_records) for event_obj in events)},
-        "users": [{"id": user.id, "name": user.name, "email": user.email, "major": user.major, "year": user.year, "role": user.role, "position": user.position or "", "stars": user.stars, "eligibleForLeaderboard": bool(user.eligible_for_leaderboard), "createdAt": user.created_at.isoformat(), "profileImage": user.profile_image or ""} for user in users],
+        "users": [{"id": user.id, "name": user.name, "email": user.email, "major": user.major, "year": user.year, "role": user.role, "position": user.position or "", "stars": user.stars, "eligibleForLeaderboard": bool(user.eligible_for_leaderboard), "createdAt": user.created_at.isoformat(), "profileImage": user.profile_image or "", "emailVerified": bool(user.email_verified)} for user in users],
         "events": [{"id": event_obj.id, "title": event_obj.title, "type": event_obj.type, "status": event_obj.status, "date": event_obj.date, "time": event_obj.time, "location": event_obj.location, "stars": event_obj.stars, "checkinActive": bool(event_obj.checkin_active), "attendanceCode": event_obj.attendance_code or "", "interestedCount": len(event_obj.interests), "rsvpCount": len(event_obj.rsvps), "attendanceCount": len(event_obj.attendance_records), "attendees": [{"id": attendance.user.id, "name": attendance.user.name, "email": attendance.user.email, "major": attendance.user.major, "year": attendance.user.year, "checkedInAt": attendance.created_at.isoformat()} for attendance in sorted(event_obj.attendance_records, key=lambda record: record.created_at)]} for event_obj in events],
         "subscriptions": [{"id": subscription.id, "userId": subscription.user_id, "endpoint": subscription.endpoint, "createdAt": subscription.created_at.isoformat()} for subscription in subscriptions],
     }
@@ -547,15 +619,33 @@ def signup():
     if error:
         return jsonify({"error": error}), 400
     db = get_db()
-    user = User(name=values["name"], email=values["email"], password_hash=values["password_hash"], major=values["major"], year=values["year"], role=values["role"], position=values["position"], eligible_for_leaderboard=values["eligible_for_leaderboard"], bio=values["bio"], created_at=utc_now())
+    verification_token = secrets.token_urlsafe(32)
+    user = User(
+        name=values["name"],
+        email=values["email"],
+        password_hash=values["password_hash"],
+        major=values["major"],
+        year=values["year"],
+        role=values["role"],
+        position=values["position"],
+        eligible_for_leaderboard=values["eligible_for_leaderboard"],
+        bio=values["bio"],
+        email_verified=False,
+        verification_token=verification_token,
+        verification_token_expires_at=utc_now() + timedelta(hours=48),
+        created_at=utc_now()
+    )
     db.add(user)
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
         return jsonify({"error": "An account with that email already exists."}), 409
-    flask_session["user_id"] = user.id
-    return jsonify(get_dashboard_payload(user)), 201
+    try:
+        send_verification_email(user.email, verification_token, request.url_root.rstrip("/"))
+    except Exception as exc:
+        print(f"Verification email error: {exc}")
+    return jsonify({"message": "Your account has been created. Please check your email to verify your account before logging in."}), 201
 
 
 @app.post("/api/auth/login")
@@ -570,8 +660,56 @@ def login():
     user = db.scalar(select(User).where(User.email == email))
     if user is None or not check_password_hash(user.password_hash, password):
         return jsonify({"error": "We could not match that email and password."}), 401
+    if not user.email_verified:
+        return jsonify({"error": "Please verify your email before logging in.", "needsVerification": True, "email": user.email}), 403
     flask_session["user_id"] = user.id
     return jsonify(get_dashboard_payload(user))
+
+
+@app.post("/api/auth/resend-verification")
+def resend_verification():
+    init_db()
+    payload = request.get_json(silent=True) or {}
+    email = str(payload.get("email", "")).strip().lower()
+    response = {"message": "If that account still needs verification, a new email has been sent."}
+    if not email:
+        return jsonify(response)
+
+    db = get_db()
+    user = db.scalar(select(User).where(User.email == email))
+    if user is None or user.email_verified:
+        return jsonify(response)
+
+    user.verification_token = secrets.token_urlsafe(32)
+    user.verification_token_expires_at = utc_now() + timedelta(hours=48)
+    db.commit()
+
+    try:
+        send_verification_email(user.email, user.verification_token, request.url_root.rstrip("/"))
+    except Exception as exc:
+        print(f"Verification resend email error: {exc}")
+
+    return jsonify(response)
+
+
+@app.get("/api/auth/verify-email")
+def verify_email():
+    init_db()
+    token = str(request.args.get("token", "")).strip()
+    app_base = build_app_base_url(request.url_root.rstrip("/")) or request.url_root.rstrip("/")
+    if not token:
+        return redirect(f"{app_base}/?verified=invalid")
+
+    db = get_db()
+    user = db.scalar(select(User).where(User.verification_token == token))
+    if user is None or user.verification_token_expires_at is None or user.verification_token_expires_at < utc_now():
+        return redirect(f"{app_base}/?verified=invalid")
+
+    user.email_verified = True
+    user.verification_token = None
+    user.verification_token_expires_at = None
+    db.commit()
+    return redirect(f"{app_base}/?verified=success")
 
 
 @app.post("/api/auth/forgot-password")

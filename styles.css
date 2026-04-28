@@ -9,6 +9,7 @@
   --primary-deep: #082f57;
   --secondary: #1d7b5d;
   --secondary-soft: #d9f0e5;
+  --secondary-ink: #134b39;
   --line: rgba(15, 23, 34, 0.09);
   --shadow: 0 24px 70px rgba(8, 30, 56, 0.13);
   --gold: #d6b04c;
@@ -21,6 +22,34 @@
   --display-font: Georgia, "Times New Roman", serif;
   --body-font: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
   --hero-image: url("assets/sase-background.png");
+  --page-overlay: linear-gradient(180deg, rgba(245, 249, 252, 0.76), rgba(232, 239, 245, 0.82));
+  --page-accent-overlay: linear-gradient(135deg, rgba(8, 33, 57, 0.22), rgba(13, 77, 140, 0.1));
+  --grid-line: rgba(255, 255, 255, 0.12);
+  --theme-button-bg: rgba(255, 255, 255, 0.92);
+  --theme-button-ink: #0f1722;
+  --theme-button-border: rgba(15, 23, 34, 0.08);
+}
+
+body[data-theme="dark"] {
+  --bg: #07131f;
+  --surface: rgba(11, 24, 38, 0.86);
+  --surface-strong: rgba(10, 20, 33, 0.94);
+  --surface-dark: #04101c;
+  --ink: #e7eff7;
+  --muted: #a6b6c6;
+  --primary: #63a6ef;
+  --primary-deep: #2f72bb;
+  --secondary: #5cc497;
+  --secondary-soft: rgba(29, 123, 93, 0.22);
+  --secondary-ink: #dff7ee;
+  --line: rgba(206, 223, 240, 0.14);
+  --shadow: 0 24px 70px rgba(2, 9, 16, 0.42);
+  --page-overlay: linear-gradient(180deg, rgba(5, 14, 24, 0.86), rgba(6, 15, 26, 0.92));
+  --page-accent-overlay: linear-gradient(135deg, rgba(13, 77, 140, 0.26), rgba(29, 123, 93, 0.18));
+  --grid-line: rgba(255, 255, 255, 0.05);
+  --theme-button-bg: rgba(9, 20, 31, 0.9);
+  --theme-button-ink: #edf5fc;
+  --theme-button-border: rgba(206, 223, 240, 0.16);
 }
 
 * {
@@ -37,8 +66,8 @@ body {
   color: var(--ink);
   font-family: var(--body-font);
   background:
-    linear-gradient(180deg, rgba(245, 249, 252, 0.76), rgba(232, 239, 245, 0.82)),
-    linear-gradient(135deg, rgba(8, 33, 57, 0.22), rgba(13, 77, 140, 0.1)),
+    var(--page-overlay),
+    var(--page-accent-overlay),
     var(--hero-image);
   background-size: cover;
   background-position: center center;
@@ -51,8 +80,8 @@ body::before {
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(rgba(255, 255, 255, 0.12) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.12) 1px, transparent 1px);
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
   background-size: 34px 34px;
   mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.45), transparent 92%);
 }
@@ -73,6 +102,21 @@ a {
   display: none !important;
 }
 
+.theme-toggle {
+  position: sticky;
+  top: 1rem;
+  z-index: 30;
+  margin-left: auto;
+  display: block;
+  padding: 0.82rem 1rem;
+  border: 1px solid var(--theme-button-border);
+  border-radius: 999px;
+  background: var(--theme-button-bg);
+  color: var(--theme-button-ink);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(16px);
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -89,7 +133,7 @@ a {
   padding: 1.4rem;
   border-radius: var(--radius-lg);
   border: 1px solid rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.96);
+  background: var(--surface-strong);
   box-shadow: var(--shadow);
 }
 
@@ -283,8 +327,9 @@ a {
   width: 100%;
   padding: 0.95rem 1rem;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(15, 23, 34, 0.12);
-  background: rgba(255, 255, 255, 0.98);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
 }
 
 .auth-form input:focus,
@@ -920,8 +965,9 @@ a {
   min-width: 0;
   padding: 0.95rem 1rem;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(15, 23, 34, 0.12);
-  background: rgba(255, 255, 255, 0.98);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
 }
 
 .attendance-code {
