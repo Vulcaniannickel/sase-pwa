@@ -701,6 +701,10 @@ a {
   gap: 1rem;
 }
 
+.officer-grid {
+  gap: 1.35rem;
+}
+
 .events-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -922,6 +926,43 @@ a {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.officer-group {
+  display: grid;
+  gap: 1rem;
+  padding: 1.2rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, var(--surface-strong), var(--panel-highlight-soft));
+  box-shadow: var(--shadow);
+}
+
+.officer-group-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: end;
+}
+
+.officer-group-header h3 {
+  margin: 0;
+  font-family: var(--display-font);
+  font-size: 1.25rem;
+  letter-spacing: -0.03em;
+}
+
+.officer-group-header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.officer-group-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .officer-card {
   padding: 1.2rem;
   text-align: center;
@@ -1072,6 +1113,7 @@ a {
   .admin-layout,
   .events-grid,
   .officer-grid,
+  .officer-group-grid,
   .home-grid {
     grid-template-columns: 1fr;
   }
@@ -1154,7 +1196,8 @@ a {
   }
 
   .completed-event-summary,
-  .attendee-row {
+  .attendee-row,
+  .officer-group-header {
     flex-direction: column;
   }
 

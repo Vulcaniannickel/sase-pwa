@@ -989,18 +989,198 @@ function renderOfficers() {
     return;
   }
 
-  appState.officers.forEach((officer) => {
-    const card = document.createElement("article");
-    card.className = "officer-card";
-    card.innerHTML = `
-      ${officer.profileImage ? `<img class="officer-photo" src="${officer.profileImage}" alt="${officer.name} portrait">` : `<div class="officer-avatar" aria-hidden="true">${officer.initials}</div>`}
-      <h3>${officer.name}</h3>
-      <p class="officer-role">${officer.role}</p>
-      <p>${officer.major}</p>
-      <p>${officer.bio}</p>
+  const officerGroups = buildOfficerGroups(appState.officers);
+
+  officerGroups.forEach((group) => {
+    if (!group.officers.length) {
+      return;
+    }
+
+    const section = document.createElement("section");
+    section.className = "officer-group";
+
+    const header = document.createElement("div");
+    header.className = "officer-group-header";
+    header.innerHTML = `
+      <h3>${group.title}</h3>
+      <p>${group.officers.length} ${group.officers.length === 1 ? "officer" : "officers"}</p>
     `;
-    officerGrid.appendChild(card);
+    section.appendChild(header);
+
+    const groupGrid = document.createElement("div");
+    groupGrid.className = "officer-group-grid";
+
+    group.officers.forEach((officer) => {
+      const card = document.createElement("article");
+      card.className = "officer-card";
+      card.innerHTML = `
+        ${officer.profileImage ? `<img class="officer-photo" src="${officer.profileImage}" alt="${officer.name} portrait">` : `<div class="officer-avatar" aria-hidden="true">${officer.initials}</div>`}
+        <h3>${officer.name}</h3>
+        <p class="officer-role">${officer.role}</p>
+        <p>${officer.major}</p>
+        <p>${officer.bio}</p>
+      `;
+      groupGrid.appendChild(card);
+    });
+
+    section.appendChild(groupGrid);
+    officerGrid.appendChild(section);
   });
+}
+
+const EXECUTIVE_OFFICER_ORDER = [
+  "president",
+  "external vice president",
+  "internal vice president",
+  "media vice president",
+  "secretary",
+  "treasurer"
+];
+
+const OFFICER_GROUP_DEFINITIONS = [
+  {
+    title: "Executive Board",
+    match(position) {
+      return Boolean(getExecutiveOfficerKey(position));
+    },
+    sortValue(officer) {
+      return EXECUTIVE_OFFICER_ORDER.indexOf(getExecutiveOfficerKey(officer.role));
+    }
+  },
+  {
+    title: "Internal Board",
+    match(position) {
+      return matchesOfficerAliases(position, [
+        "member engagement",
+        "member engagement chair",
+        "event coordinator",
+        "service chair",
+        "cultural chair",
+        "sport coordinator",
+        "sports coordinator"
+      ]);
+    }
+  },
+  {
+    title: "External Board",
+    match(position) {
+      return matchesOfficerAliases(position, [
+        "engineering tech chair",
+        "eng tech chair",
+        "cs tech chair",
+        "computer science tech chair",
+        "science chair",
+        "pro dev",
+        "professional development",
+        "professional development chair",
+        "project chair"
+      ]);
+    }
+  },
+  {
+    title: "Media Board",
+    match(position) {
+      return matchesOfficerAliases(position, [
+        "creative director",
+        "creative directors",
+        "historian",
+        "historians",
+        "public relations",
+        "pr"
+      ]);
+    }
+  },
+  {
+    title: "Officer Team",
+    match() {
+      return true;
+    }
+  }
+];
+
+function normalizeOfficerPosition(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[().,/\\-]+/g, " ")
+    .replace(/\bvice pres\b/g, "vice president")
+    .replace(/\bvp\b/g, "vice president")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function matchesOfficerAliases(position, aliases) {
+  const normalized = normalizeOfficerPosition(position);
+  return aliases.some((alias) => {
+    const normalizedAlias = normalizeOfficerPosition(alias);
+    return normalized === normalizedAlias || normalized.includes(normalizedAlias);
+  });
+}
+
+function getExecutiveOfficerKey(position) {
+  const normalized = normalizeOfficerPosition(position);
+
+  if (normalized === "president" || normalized.includes(" president")) {
+    if (!normalized.includes("vice president")) {
+      return "president";
+    }
+  }
+
+  if (matchesOfficerAliases(normalized, ["external vice president", "evp"])) {
+    return "external vice president";
+  }
+
+  if (matchesOfficerAliases(normalized, ["internal vice president", "ivp"])) {
+    return "internal vice president";
+  }
+
+  if (matchesOfficerAliases(normalized, ["media vice president", "mvp"])) {
+    return "media vice president";
+  }
+
+  if (matchesOfficerAliases(normalized, ["secretary", "sec"])) {
+    return "secretary";
+  }
+
+  if (matchesOfficerAliases(normalized, ["treasurer", "treas"])) {
+    return "treasurer";
+  }
+
+  return "";
+}
+
+function buildOfficerGroups(officers) {
+  const groups = OFFICER_GROUP_DEFINITIONS.map((group) => ({
+    ...group,
+    officers: []
+  }));
+
+  officers.forEach((officer) => {
+    const position = officer.role || "";
+    const group = groups.find((candidate) => candidate.match(position));
+    group?.officers.push(officer);
+  });
+
+  groups.forEach((group) => {
+    group.officers.sort((left, right) => {
+      const leftOrder = typeof group.sortValue === "function" ? group.sortValue(left) : Number.POSITIVE_INFINITY;
+      const rightOrder = typeof group.sortValue === "function" ? group.sortValue(right) : Number.POSITIVE_INFINITY;
+
+      if (leftOrder !== rightOrder) {
+        return leftOrder - rightOrder;
+      }
+
+      const leftRole = normalizeOfficerPosition(left.role);
+      const rightRole = normalizeOfficerPosition(right.role);
+      if (leftRole !== rightRole) {
+        return leftRole.localeCompare(rightRole);
+      }
+
+      return left.name.localeCompare(right.name);
+    });
+  });
+
+  return groups;
 }
 
 function renderLeaderboard() {
