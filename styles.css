@@ -1095,6 +1095,11 @@ a {
     width: min(calc(100% - 1rem), var(--content-width));
   }
 
+  .dashboard {
+    padding-bottom: 8rem;
+    padding-bottom: calc(8rem + env(safe-area-inset-bottom));
+  }
+
   .auth-card,
   .card,
   .topbar,
@@ -1107,12 +1112,25 @@ a {
   }
 
   .topbar-actions {
-    justify-content: space-between;
+    display: flex;
+    width: 100%;
+    justify-content: flex-end;
+    gap: 0.75rem;
   }
 
   .main-nav {
-    width: min(calc(100% - 1rem), 26rem);
+    position: fixed !important;
+    left: 0.5rem;
+    right: 0.5rem;
+    top: auto !important;
+    bottom: 0.75rem;
+    bottom: calc(0.75rem + env(safe-area-inset-bottom));
+    transform: none;
+    width: auto;
+    max-width: none;
     justify-content: space-between;
+    margin: 0;
+    z-index: 60;
   }
 
   .main-nav .nav-pill {
