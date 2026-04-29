@@ -19,10 +19,8 @@ let appState = {
 let deferredPrompt;
 let pendingCheckinToken = new URLSearchParams(window.location.search).get("checkin") || "";
 let pendingResetToken = new URLSearchParams(window.location.search).get("reset") || "";
-let pendingVerifiedStatus = new URLSearchParams(window.location.search).get("verified") || "";
 let pendingProfileImage = "";
 let shouldPromptNotificationsAfterSignup = false;
-let pendingVerificationEmail = "";
 
 const authScreen = document.getElementById("authScreen");
 const dashboard = document.getElementById("dashboard");
@@ -36,7 +34,6 @@ const signupForm = document.getElementById("signupForm");
 const showForgotPasswordButton = document.getElementById("showForgotPasswordButton");
 const backToLoginButton = document.getElementById("backToLoginButton");
 const backToLoginFromResetButton = document.getElementById("backToLoginFromResetButton");
-const resendVerificationButton = document.getElementById("resendVerificationButton");
 const signupRoleSelect = document.getElementById("signupRoleSelect");
 const signupOfficerInviteField = document.getElementById("signupOfficerInviteField");
 const signupOfficerInviteInput = document.getElementById("signupOfficerInviteInput");
@@ -255,12 +252,6 @@ function clearResetQuery() {
   window.history.replaceState({}, "", url);
 }
 
-function clearVerifiedQuery() {
-  const url = new URL(window.location.href);
-  url.searchParams.delete("verified");
-  window.history.replaceState({}, "", url);
-}
-
 function parseEventDateTime(dateText, timeText) {
   const currentYear = new Date().getFullYear();
   const candidates = [
@@ -303,7 +294,6 @@ function showAuthView(target) {
   forgotPasswordForm.classList.add("hidden");
   resetPasswordForm.classList.add("hidden");
   signupForm.classList.toggle("hidden", target !== "signup");
-  resendVerificationButton?.classList.add("hidden");
   loginNote.textContent = "";
   forgotPasswordNote.textContent = "";
   resetPasswordNote.textContent = "";
@@ -525,24 +515,6 @@ backToLoginFromResetButton?.addEventListener("click", () => {
   showAuthView("login");
 });
 
-resendVerificationButton?.addEventListener("click", async () => {
-  const email = pendingVerificationEmail || String(new FormData(loginForm).get("email") || "").trim();
-  if (!email) {
-    loginNote.textContent = "Enter your email first so we know where to resend the verification link.";
-    return;
-  }
-
-  try {
-    const data = await apiFetch("/api/auth/resend-verification", {
-      method: "POST",
-      body: JSON.stringify({ email })
-    });
-    loginNote.textContent = data.message || "If that account still needs verification, a new email has been sent.";
-  } catch (error) {
-    loginNote.textContent = error.message;
-  }
-});
-
 signupRoleSelect?.addEventListener("change", updateSignupRoleFields);
 
 navButtons.forEach((button) => {
@@ -629,8 +601,6 @@ loginForm.addEventListener("submit", async (event) => {
     await syncNotificationButtonState();
   } catch (error) {
     loginNote.textContent = error.message;
-    pendingVerificationEmail = error.data?.email || String(formData.get("email") || "").trim();
-    resendVerificationButton?.classList.toggle("hidden", !error.data?.needsVerification);
   }
 });
 
@@ -640,7 +610,7 @@ signupForm.addEventListener("submit", async (event) => {
   const formData = new FormData(signupForm);
 
   try {
-    const data = await apiFetch("/api/auth/signup", {
+    appState = await apiFetch("/api/auth/signup", {
       method: "POST",
       body: JSON.stringify({
         name: String(formData.get("name") || "").trim(),
@@ -656,10 +626,14 @@ signupForm.addEventListener("submit", async (event) => {
     });
     signupForm.reset();
     updateSignupRoleFields();
-    pendingVerificationEmail = String(formData.get("email") || "").trim();
-    showAuthView("login");
-    loginNote.textContent = data.message || "Check your inbox to verify your account before logging in.";
-    resendVerificationButton?.classList.remove("hidden");
+    await claimPendingCheckin();
+    shouldPromptNotificationsAfterSignup = true;
+    renderApp();
+    await syncNotificationButtonState();
+    if (shouldPromptNotificationsAfterSignup && Notification.permission === "default") {
+      setNotificationPromptVisibility(true);
+      shouldPromptNotificationsAfterSignup = false;
+    }
   } catch (error) {
     signupNote.textContent = error.message;
   }
@@ -837,7 +811,6 @@ logoutButton.addEventListener("click", async () => {
   liveCheckinNote.textContent = "";
   pendingProfileImage = "";
   shouldPromptNotificationsAfterSignup = false;
-  pendingVerificationEmail = "";
   if (profilePhotoInput) {
     profilePhotoInput.value = "";
   }
@@ -1434,18 +1407,6 @@ apiFetch("/api/bootstrap")
     }
     updateSignupRoleFields();
     await syncNotificationButtonState();
-    if (pendingVerifiedStatus === "success") {
-      showAuthView("login");
-      loginNote.textContent = "Your email has been verified. You can log in now.";
-      pendingVerifiedStatus = "";
-      clearVerifiedQuery();
-    } else if (pendingVerifiedStatus === "invalid") {
-      showAuthView("login");
-      loginNote.textContent = "That verification link is invalid or expired. You can resend it below.";
-      resendVerificationButton?.classList.remove("hidden");
-      pendingVerifiedStatus = "";
-      clearVerifiedQuery();
-    }
   })
   .catch((error) => {
     loginNote.textContent = error.message;

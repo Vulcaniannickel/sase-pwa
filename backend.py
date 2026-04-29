@@ -14,7 +14,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
-from flask import Flask, g, jsonify, redirect, request, send_from_directory, session as flask_session
+from flask import Flask, g, jsonify, request, send_from_directory, session as flask_session
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, event, func, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
@@ -619,7 +619,6 @@ def signup():
     if error:
         return jsonify({"error": error}), 400
     db = get_db()
-    verification_token = secrets.token_urlsafe(32)
     user = User(
         name=values["name"],
         email=values["email"],
@@ -630,9 +629,7 @@ def signup():
         position=values["position"],
         eligible_for_leaderboard=values["eligible_for_leaderboard"],
         bio=values["bio"],
-        email_verified=False,
-        verification_token=verification_token,
-        verification_token_expires_at=utc_now() + timedelta(hours=48),
+        email_verified=True,
         created_at=utc_now()
     )
     db.add(user)
@@ -641,11 +638,8 @@ def signup():
     except IntegrityError:
         db.rollback()
         return jsonify({"error": "An account with that email already exists."}), 409
-    try:
-        send_verification_email(user.email, verification_token, request.url_root.rstrip("/"))
-    except Exception as exc:
-        print(f"Verification email error: {exc}")
-    return jsonify({"message": "Your account has been created. Please check your email to verify your account before logging in."}), 201
+    flask_session["user_id"] = user.id
+    return jsonify(get_dashboard_payload(user)), 201
 
 
 @app.post("/api/auth/login")
@@ -660,56 +654,8 @@ def login():
     user = db.scalar(select(User).where(User.email == email))
     if user is None or not check_password_hash(user.password_hash, password):
         return jsonify({"error": "We could not match that email and password."}), 401
-    if not user.email_verified:
-        return jsonify({"error": "Please verify your email before logging in.", "needsVerification": True, "email": user.email}), 403
     flask_session["user_id"] = user.id
     return jsonify(get_dashboard_payload(user))
-
-
-@app.post("/api/auth/resend-verification")
-def resend_verification():
-    init_db()
-    payload = request.get_json(silent=True) or {}
-    email = str(payload.get("email", "")).strip().lower()
-    response = {"message": "If that account still needs verification, a new email has been sent."}
-    if not email:
-        return jsonify(response)
-
-    db = get_db()
-    user = db.scalar(select(User).where(User.email == email))
-    if user is None or user.email_verified:
-        return jsonify(response)
-
-    user.verification_token = secrets.token_urlsafe(32)
-    user.verification_token_expires_at = utc_now() + timedelta(hours=48)
-    db.commit()
-
-    try:
-        send_verification_email(user.email, user.verification_token, request.url_root.rstrip("/"))
-    except Exception as exc:
-        print(f"Verification resend email error: {exc}")
-
-    return jsonify(response)
-
-
-@app.get("/api/auth/verify-email")
-def verify_email():
-    init_db()
-    token = str(request.args.get("token", "")).strip()
-    app_base = build_app_base_url(request.url_root.rstrip("/")) or request.url_root.rstrip("/")
-    if not token:
-        return redirect(f"{app_base}/?verified=invalid")
-
-    db = get_db()
-    user = db.scalar(select(User).where(User.verification_token == token))
-    if user is None or user.verification_token_expires_at is None or user.verification_token_expires_at < utc_now():
-        return redirect(f"{app_base}/?verified=invalid")
-
-    user.email_verified = True
-    user.verification_token = None
-    user.verification_token_expires_at = None
-    db.commit()
-    return redirect(f"{app_base}/?verified=success")
 
 
 @app.post("/api/auth/forgot-password")
