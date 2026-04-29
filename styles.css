@@ -471,7 +471,8 @@ a {
 .dashboard {
   display: grid;
   gap: 1rem;
-  padding-bottom: calc(6.5rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: 6.5rem;
+  padding-bottom: calc(6.5rem + env(safe-area-inset-bottom));
 }
 
 .topbar {
@@ -525,9 +526,14 @@ a {
 .main-nav {
   position: fixed;
   left: 50%;
-  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  top: auto;
+  right: auto;
+  bottom: 1rem;
+  bottom: calc(1rem + env(safe-area-inset-bottom));
   transform: translateX(-50%);
   z-index: 40;
+  width: max-content;
+  max-width: calc(100vw - 1rem);
   padding: 0.45rem;
   border: 1px solid var(--line);
   border-radius: 999px;
