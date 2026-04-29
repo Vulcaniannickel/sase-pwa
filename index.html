@@ -12,6 +12,7 @@
   <link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.svg">
   <link rel="stylesheet" href="styles.css">
+  <script src="https://unpkg.com/lucide@latest"></script>
   <title>SASE Student Portal</title>
 </head>
 <body>
@@ -19,7 +20,9 @@
   <div class="background-orb orb-two"></div>
 
   <div class="app-shell">
-    <button class="theme-toggle" id="themeToggleButton" type="button">Use Dark Mode</button>
+    <button class="theme-toggle icon-toggle" id="themeToggleButton" type="button" aria-label="Toggle theme" title="Toggle theme">
+      <i data-lucide="moon-star"></i>
+    </button>
     <section class="auth-screen" id="authScreen">
       <div class="auth-card auth-hero">
         <div class="hero-image-panel">
@@ -158,12 +161,24 @@
         </a>
 
         <nav class="main-nav" aria-label="Primary">
-          <button class="nav-pill active" data-tab-target="home" type="button">Home</button>
-          <button class="nav-pill" data-tab-target="events" type="button">Events</button>
-          <button class="nav-pill" data-tab-target="leaderboard" type="button">Leaderboard</button>
-          <button class="nav-pill" data-tab-target="officers" type="button">Officers</button>
-          <button class="nav-pill hidden" data-tab-target="admin" id="adminTabButton" type="button">Admin</button>
-          <button class="nav-pill hidden" data-tab-target="data" id="dataTabButton" type="button">Data</button>
+          <button class="nav-pill icon-pill active" data-tab-target="home" type="button" aria-label="Home" title="Home">
+            <i data-lucide="house"></i>
+          </button>
+          <button class="nav-pill icon-pill" data-tab-target="events" type="button" aria-label="Events" title="Events">
+            <i data-lucide="calendar-days"></i>
+          </button>
+          <button class="nav-pill icon-pill" data-tab-target="leaderboard" type="button" aria-label="Leaderboard" title="Leaderboard">
+            <i data-lucide="trophy"></i>
+          </button>
+          <button class="nav-pill icon-pill" data-tab-target="officers" type="button" aria-label="Officers" title="Officers">
+            <i data-lucide="users"></i>
+          </button>
+          <button class="nav-pill icon-pill hidden" data-tab-target="admin" id="adminTabButton" type="button" aria-label="Admin" title="Admin">
+            <i data-lucide="shield-check"></i>
+          </button>
+          <button class="nav-pill icon-pill hidden" data-tab-target="data" id="dataTabButton" type="button" aria-label="Data" title="Data">
+            <i data-lucide="database"></i>
+          </button>
         </nav>
 
         <div class="topbar-actions">

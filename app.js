@@ -83,7 +83,6 @@ const adminView = document.getElementById("adminView");
 const dataView = document.getElementById("dataView");
 const logoutButton = document.getElementById("logoutButton");
 const themeToggleButton = document.getElementById("themeToggleButton");
-const dashboardThemeButton = document.getElementById("dashboardThemeButton");
 const welcomeMessage = document.getElementById("welcomeMessage");
 const welcomeSubtext = document.getElementById("welcomeSubtext");
 const profileStars = document.getElementById("profileStars");
@@ -132,15 +131,19 @@ function applyTheme(theme) {
   document.body.dataset.theme = resolvedTheme;
   localStorage.setItem(THEME_STORAGE_KEY, resolvedTheme);
   const nextLabel = resolvedTheme === "dark" ? "Use Light Mode" : "Use Dark Mode";
+  const nextIcon = resolvedTheme === "dark" ? "sun-medium" : "moon-star";
   if (themeToggleButton) {
-    themeToggleButton.textContent = nextLabel;
-  }
-  if (dashboardThemeButton) {
-    dashboardThemeButton.textContent = nextLabel;
+    themeToggleButton.setAttribute("aria-label", nextLabel);
+    themeToggleButton.setAttribute("title", nextLabel);
+    const icon = themeToggleButton.querySelector("[data-lucide]");
+    if (icon) {
+      icon.setAttribute("data-lucide", nextIcon);
+    }
   }
   if (themeColorMeta) {
     themeColorMeta.setAttribute("content", resolvedTheme === "dark" ? "#07131f" : "#0d4d8c");
   }
+  renderLucideIcons();
 }
 
 function getStoredTheme() {
@@ -149,6 +152,12 @@ function getStoredTheme() {
 
 function toggleTheme() {
   applyTheme(document.body.dataset.theme === "dark" ? "light" : "dark");
+}
+
+function renderLucideIcons() {
+  if (window.lucide?.createIcons) {
+    window.lucide.createIcons();
+  }
 }
 
 function createEmptyState(message) {
@@ -1392,7 +1401,6 @@ if ("serviceWorker" in navigator) {
 }
 
 themeToggleButton?.addEventListener("click", toggleTheme);
-dashboardThemeButton?.addEventListener("click", toggleTheme);
 
 applyTheme(getStoredTheme());
 
