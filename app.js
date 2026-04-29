@@ -996,10 +996,13 @@ function renderOfficers() {
       return;
     }
 
-    const section = document.createElement("section");
+    const section = document.createElement("details");
     section.className = "officer-group";
+    if (!window.matchMedia("(max-width: 720px)").matches) {
+      section.open = true;
+    }
 
-    const header = document.createElement("div");
+    const header = document.createElement("summary");
     header.className = "officer-group-header";
     header.innerHTML = `
       <h3>${group.title}</h3>
