@@ -44,20 +44,28 @@ You can also double-click `start-backend.cmd`.
 
 ## Deploying publicly
 
-Because this app has a Python backend, use a host like Render, Railway, or Fly.io. GitHub Pages alone is not enough.
+Best easy/free path right now:
 
-The project is already prepared for Render with [render.yaml](./render.yaml).
+- Supabase for Postgres
+- Render Free Web Service for the Flask app
 
-Basic Render flow:
+The app supports any Postgres connection through `DATABASE_URL`, so the database host can be swapped without code changes.
+
+Basic Render + Supabase flow:
 
 1. Push this project to a GitHub repository
-2. Create a new Render web service from that repo
-3. Create a Postgres database in Render
-4. Copy the Postgres internal database URL into `DATABASE_URL`
-5. Set `OFFICER_INVITE_CODE` in Render
+2. Create a new Supabase project
+3. Copy the Supabase **Session pooler** connection string into `DATABASE_URL`
+4. Create a Render web service from this repo
+5. Set `DATABASE_URL`, `SECRET_KEY`, and `OFFICER_INVITE_CODE` in Render
 6. Set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_CLAIMS_SUBJECT` in Render if you want push notifications
 7. Let Render build and deploy the app
 8. Use the public Render URL for your QR codes
+
+Important Render Free note:
+
+- the app will spin down after idle time and take a little while to wake up again
+- scheduled background-style notification timing is less reliable on sleeping/free hosts
 
 ## Can you still edit it after it is public?
 
@@ -144,6 +152,35 @@ There is also an officer-only API endpoint:
 ```text
 /api/admin/data
 ```
+
+## Supabase migration
+
+If you already have a Render Postgres database and want to move it to Supabase:
+
+1. In Render, copy the current database connection string.
+2. In Supabase, open `Connect` and copy the **Session pooler** URI.
+3. Export the Render database:
+
+```powershell
+$env:OLD_DB_URL="YOUR_RENDER_DATABASE_URL"
+pg_dump "$env:OLD_DB_URL" `
+  --clean `
+  --if-exists `
+  --quote-all-identifiers `
+  --no-owner `
+  --no-privileges `
+  > dump.sql
+```
+
+4. Import into Supabase:
+
+```powershell
+$env:NEW_DB_URL="YOUR_SUPABASE_SESSION_POOLER_URL"
+psql -d "$env:NEW_DB_URL" -f dump.sql
+```
+
+5. In Render, replace the web service `DATABASE_URL` value with the Supabase Session pooler URI.
+6. Redeploy and test logins, events, attendance, stars, and notifications.
 
 ## Notes before public launch
 
