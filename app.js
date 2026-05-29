@@ -19,6 +19,7 @@ let appState = {
 let deferredPrompt;
 let pendingCheckinToken = new URLSearchParams(window.location.search).get("checkin") || "";
 let pendingResetToken = new URLSearchParams(window.location.search).get("reset") || "";
+let pendingFeedbackEventId = Number(new URLSearchParams(window.location.search).get("feedback") || 0);
 let pendingProfileImage = "";
 let shouldPromptNotificationsAfterSignup = false;
 
@@ -63,6 +64,13 @@ const notificationSupportNote = document.getElementById("notificationSupportNote
 const notificationPromptModal = document.getElementById("notificationPromptModal");
 const notificationPromptEnable = document.getElementById("notificationPromptEnable");
 const notificationPromptLater = document.getElementById("notificationPromptLater");
+const feedbackModal = document.getElementById("feedbackModal");
+const feedbackForm = document.getElementById("feedbackForm");
+const feedbackEventTitle = document.getElementById("feedbackEventTitle");
+const feedbackRatingInput = document.getElementById("feedbackRatingInput");
+const feedbackCommentInput = document.getElementById("feedbackCommentInput");
+const feedbackNote = document.getElementById("feedbackNote");
+const feedbackCloseButton = document.getElementById("feedbackCloseButton");
 const upcomingEventsGrid = document.getElementById("upcomingEventsGrid");
 const completedEventsGrid = document.getElementById("completedEventsGrid");
 const officerGrid = document.getElementById("officerGrid");
@@ -167,6 +175,15 @@ function createEmptyState(message) {
   return stateNode;
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 function formatCheckinTime(isoString) {
   if (!isoString) {
     return "";
@@ -202,6 +219,10 @@ function renderOfficerPhotoPreview(imageUrl, fallbackText = "Officer photo previ
 
 function setNotificationPromptVisibility(visible) {
   notificationPromptModal?.classList.toggle("hidden", !visible);
+}
+
+function setFeedbackModalVisibility(visible) {
+  feedbackModal?.classList.toggle("hidden", !visible);
 }
 
 function getNotificationSupportDiagnostics() {
@@ -258,6 +279,12 @@ function clearCheckinQuery() {
 function clearResetQuery() {
   const url = new URL(window.location.href);
   url.searchParams.delete("reset");
+  window.history.replaceState({}, "", url);
+}
+
+function clearFeedbackQuery() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("feedback");
   window.history.replaceState({}, "", url);
 }
 
@@ -407,6 +434,45 @@ async function claimPendingCheckin() {
   }
 }
 
+function getFeedbackEvent(eventId) {
+  return appState.events.find((eventRecord) => eventRecord.id === Number(eventId)) || null;
+}
+
+function openFeedbackForm(eventId) {
+  const eventRecord = getFeedbackEvent(eventId);
+  if (!eventRecord) {
+    setBanner("That feedback link does not match an event.");
+    return false;
+  }
+  if (!eventRecord.isAttended) {
+    setBanner("Feedback is only available after you check in for the event.");
+    return false;
+  }
+  if (eventRecord.status !== "completed") {
+    setBanner("Feedback opens after the event is completed.");
+    return false;
+  }
+
+  feedbackForm.dataset.eventId = `${eventRecord.id}`;
+  feedbackEventTitle.textContent = eventRecord.title;
+  feedbackRatingInput.value = "5";
+  feedbackCommentInput.value = "";
+  feedbackNote.textContent = eventRecord.hasSubmittedFeedback
+    ? "You already submitted feedback. Sending this form will update it."
+    : "";
+  setFeedbackModalVisibility(true);
+  return true;
+}
+
+function openPendingFeedbackForm() {
+  if (!pendingFeedbackEventId || !appState.user) {
+    return;
+  }
+  openFeedbackForm(pendingFeedbackEventId);
+  pendingFeedbackEventId = 0;
+  clearFeedbackQuery();
+}
+
 async function syncNotificationButtonState() {
   const supported = appState.notifications?.supported && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
   enableNotificationsButton.classList.toggle("hidden", !appState.user || !supported);
@@ -553,6 +619,16 @@ notificationPromptLater?.addEventListener("click", () => {
   notificationNote.textContent = "You can enable notifications anytime from the Home tab.";
 });
 
+feedbackCloseButton?.addEventListener("click", () => {
+  setFeedbackModalVisibility(false);
+});
+
+feedbackModal?.addEventListener("click", (event) => {
+  if (event.target === feedbackModal) {
+    setFeedbackModalVisibility(false);
+  }
+});
+
 completedEventsFilter?.addEventListener("input", () => {
   if (appState.user?.role === "officer") {
     renderData();
@@ -607,6 +683,7 @@ loginForm.addEventListener("submit", async (event) => {
     loginForm.reset();
     await claimPendingCheckin();
     renderApp();
+    openPendingFeedbackForm();
     await syncNotificationButtonState();
   } catch (error) {
     loginNote.textContent = error.message;
@@ -638,8 +715,9 @@ signupForm.addEventListener("submit", async (event) => {
     await claimPendingCheckin();
     shouldPromptNotificationsAfterSignup = true;
     renderApp();
+    openPendingFeedbackForm();
     await syncNotificationButtonState();
-    if (shouldPromptNotificationsAfterSignup && Notification.permission === "default") {
+    if (shouldPromptNotificationsAfterSignup && "Notification" in window && Notification.permission === "default") {
       setNotificationPromptVisibility(true);
       shouldPromptNotificationsAfterSignup = false;
     }
@@ -749,6 +827,28 @@ liveCheckinForm.addEventListener("submit", async (event) => {
   }
 });
 
+feedbackForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  feedbackNote.textContent = "";
+  const eventId = feedbackForm.dataset.eventId;
+
+  try {
+    const data = await apiFetch(`/api/events/${eventId}/feedback`, {
+      method: "POST",
+      body: JSON.stringify({
+        rating: Number(feedbackRatingInput.value || 0),
+        comment: feedbackCommentInput.value.trim()
+      })
+    });
+    appState = data;
+    setFeedbackModalVisibility(false);
+    setBanner(data.feedbackMessage || "Thanks for sharing feedback.");
+    renderDashboard();
+  } catch (error) {
+    feedbackNote.textContent = error.message;
+  }
+});
+
 adminEventForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   adminNote.textContent = "";
@@ -825,6 +925,7 @@ logoutButton.addEventListener("click", async () => {
   }
   renderOfficerPhotoPreview("");
   setNotificationPromptVisibility(false);
+  setFeedbackModalVisibility(false);
   renderApp();
   await loadCheckinPrompt();
   await syncNotificationButtonState();
@@ -871,7 +972,10 @@ async function completeEvent(eventId) {
       method: "POST",
       body: JSON.stringify({})
     });
-    adminNote.textContent = "Event marked as completed.";
+    const summary = appState.feedbackNotificationSummary;
+    adminNote.textContent = summary
+      ? `Event marked as completed. Feedback notification sent to ${summary.sent} attendee device(s).`
+      : "Event marked as completed.";
     renderDashboard();
   } catch (error) {
     adminNote.textContent = error.message;
@@ -920,6 +1024,7 @@ function renderEventCard(eventRecord) {
       <span>${eventRecord.interestedCount} interested</span>
       <span>${eventRecord.rsvpCount} RSVP'd</span>
       <span>${eventRecord.attendanceCount} attended</span>
+      <span>${eventRecord.feedbackCount || 0} feedback</span>
     </div>
   `;
 
@@ -952,6 +1057,16 @@ function renderEventCard(eventRecord) {
     const buttons = actionRow.querySelectorAll("button");
     buttons[0].addEventListener("click", () => toggleInterest(eventRecord.id));
     buttons[1].addEventListener("click", () => toggleRsvp(eventRecord.id));
+    card.appendChild(actionRow);
+  } else if (eventRecord.isAttended) {
+    const actionRow = document.createElement("div");
+    actionRow.className = "event-actions";
+    actionRow.innerHTML = `
+      <button class="button ${eventRecord.hasSubmittedFeedback ? "button-soft" : "button-primary"}" type="button">
+        ${eventRecord.hasSubmittedFeedback ? "Update Feedback" : "Share Feedback"}
+      </button>
+    `;
+    actionRow.querySelector("button").addEventListener("click", () => openFeedbackForm(eventRecord.id));
     card.appendChild(actionRow);
   }
 
@@ -1274,6 +1389,7 @@ function renderAdminData() {
     ["Events", stats.events],
     ["RSVPs", stats.rsvps],
     ["Attendance", stats.attendance],
+    ["Feedback", stats.feedback || 0],
     ["Subscriptions", stats.subscriptions]
   ].forEach(([label, value]) => {
     const article = document.createElement("article");
@@ -1357,6 +1473,21 @@ function renderAdminData() {
           </article>
         `).join("")
       : `<div class="empty-state">${attendees.length ? "No attendees in this event match the current search." : "No member check-ins were recorded for this event."}</div>`;
+    const feedbackEntries = eventRecord.feedback || [];
+    const feedbackMarkup = feedbackEntries.length
+      ? feedbackEntries.map((entry) => `
+          <article class="feedback-row">
+            <div>
+              <strong>${escapeHtml(entry.name)}</strong>
+              <div class="admin-event-meta">${escapeHtml(entry.email)}</div>
+            </div>
+            <div class="feedback-copy">
+              <div class="feedback-rating">${entry.rating}/5</div>
+              <p>${escapeHtml(entry.comment || "No written comment.")}</p>
+            </div>
+          </article>
+        `).join("")
+      : `<div class="empty-state">No feedback has been submitted for this event yet.</div>`;
 
     wrapper.innerHTML = `
       <summary class="completed-event-summary">
@@ -1367,12 +1498,17 @@ function renderAdminData() {
         </div>
         <div class="completed-event-stats">
           <span>${eventRecord.attendanceCount} attended</span>
+          <span>${eventRecord.feedbackCount || 0} feedback</span>
           <span>${eventRecord.rsvpCount} RSVP'd</span>
           <span>${eventRecord.stars} stars</span>
         </div>
       </summary>
       <div class="attendee-list">
         ${attendeeMarkup}
+      </div>
+      <div class="feedback-list">
+        <strong>Feedback</strong>
+        ${feedbackMarkup}
       </div>
     `;
 
@@ -1595,6 +1731,7 @@ apiFetch("/api/bootstrap")
     if (appState.user) {
       await claimPendingCheckin();
       renderApp();
+      openPendingFeedbackForm();
     }
     updateSignupRoleFields();
     await syncNotificationButtonState();

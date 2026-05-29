@@ -1,4 +1,4 @@
-const CACHE_NAME = "sase-student-portal-v4";
+const CACHE_NAME = "sase-student-portal-v5";
 const APP_ASSETS = [
   "./",
   "./index.html",

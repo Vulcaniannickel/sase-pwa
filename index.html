@@ -528,6 +528,34 @@
     </div>
   </div>
 
+  <div class="modal-backdrop hidden" id="feedbackModal">
+    <div class="modal-card feedback-modal-card">
+      <p class="eyebrow">Event Feedback</p>
+      <h3 id="feedbackEventTitle">Share feedback</h3>
+      <form id="feedbackForm" class="feedback-form">
+        <label>
+          Rating
+          <select id="feedbackRatingInput" name="rating" required>
+            <option value="5">5 - Excellent</option>
+            <option value="4">4 - Good</option>
+            <option value="3">3 - Okay</option>
+            <option value="2">2 - Needs work</option>
+            <option value="1">1 - Poor</option>
+          </select>
+        </label>
+        <label>
+          Comments
+          <textarea id="feedbackCommentInput" name="comment" rows="4" maxlength="1000" placeholder="What went well? What should we improve?"></textarea>
+        </label>
+        <div class="hero-actions">
+          <button class="button button-primary" type="submit">Submit Feedback</button>
+          <button class="button button-secondary" id="feedbackCloseButton" type="button">Cancel</button>
+        </div>
+        <p class="form-note" id="feedbackNote" aria-live="polite"></p>
+      </form>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

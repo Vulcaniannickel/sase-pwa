@@ -109,6 +109,7 @@ class User(Base):
     interests: Mapped[list["EventInterest"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     rsvps: Mapped[list["EventRsvp"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     attendance_records: Mapped[list["EventAttendance"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    feedback_entries: Mapped[list["EventFeedback"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     push_subscriptions: Mapped[list["PushSubscription"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
@@ -134,6 +135,7 @@ class Event(Base):
     interests: Mapped[list["EventInterest"]] = relationship(back_populates="event", cascade="all, delete-orphan")
     rsvps: Mapped[list["EventRsvp"]] = relationship(back_populates="event", cascade="all, delete-orphan")
     attendance_records: Mapped[list["EventAttendance"]] = relationship(back_populates="event", cascade="all, delete-orphan")
+    feedback_entries: Mapped[list["EventFeedback"]] = relationship(back_populates="event", cascade="all, delete-orphan")
 
 
 class EventInterest(Base):
@@ -161,6 +163,18 @@ class EventAttendance(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     user: Mapped[User] = relationship(back_populates="attendance_records")
     event: Mapped[Event] = relationship(back_populates="attendance_records")
+
+
+class EventFeedback(Base):
+    __tablename__ = "event_feedback"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), primary_key=True)
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    user: Mapped[User] = relationship(back_populates="feedback_entries")
+    event: Mapped[Event] = relationship(back_populates="feedback_entries")
 
 
 class PushSubscription(Base):
@@ -330,11 +344,11 @@ def parse_event_datetime(event_obj):
     return None
 
 
-def build_push_payload(title, body, event_obj=None):
-    payload = {"title": title, "body": body, "url": "/"}
+def build_push_payload(title, body, event_obj=None, url=None, tag=None):
+    payload = {"title": title, "body": body, "url": url or "/"}
     if event_obj is not None:
-        payload["url"] = f"/?event={event_obj.id}"
-        payload["tag"] = f"event-{event_obj.id}"
+        payload["url"] = url or f"/?event={event_obj.id}"
+        payload["tag"] = tag or f"event-{event_obj.id}"
     return json.dumps(payload)
 
 
@@ -372,6 +386,26 @@ def send_event_push_to_all(db, event_obj, title, body):
     if not rows:
         return 0, 0, []
     return send_push_to_rows(rows, build_push_payload(title, body, event_obj), db=db)
+
+
+def send_feedback_push_to_attendees(db, event_obj):
+    recipients = {}
+    for attendance in event_obj.attendance_records:
+        for subscription in attendance.user.push_subscriptions:
+            recipients[subscription.endpoint] = subscription
+    if not recipients:
+        return 0, 0, []
+    return send_push_to_rows(
+        list(recipients.values()),
+        build_push_payload(
+            f"Feedback: {event_obj.title}",
+            f"Thanks for attending {event_obj.title}. Tap to share quick feedback.",
+            event_obj,
+            url=f"/?feedback={event_obj.id}",
+            tag=f"feedback-{event_obj.id}",
+        ),
+        db=db,
+    )
 
 
 def send_password_reset_email(recipient_email, reset_token, base_url=""):
@@ -481,7 +515,8 @@ def serialize_event(event_obj, current_user_id=None):
     interested_ids = {interest.user_id for interest in event_obj.interests}
     rsvp_ids = {rsvp.user_id for rsvp in event_obj.rsvps}
     attendance_ids = {attendance.user_id for attendance in event_obj.attendance_records}
-    return {"id": event_obj.id, "title": event_obj.title, "type": event_obj.type, "status": event_obj.status, "date": event_obj.date, "time": event_obj.time, "location": event_obj.location, "stars": event_obj.stars, "description": event_obj.description, "interestedCount": len(interested_ids), "rsvpCount": len(rsvp_ids), "attendanceCount": len(attendance_ids), "isInterested": current_user_id in interested_ids if current_user_id is not None else False, "isRsvped": current_user_id in rsvp_ids if current_user_id is not None else False, "isAttended": current_user_id in attendance_ids if current_user_id is not None else False, "checkinActive": bool(event_obj.checkin_active), "checkinToken": event_obj.checkin_token or ""}
+    feedback_user_ids = {feedback.user_id for feedback in event_obj.feedback_entries}
+    return {"id": event_obj.id, "title": event_obj.title, "type": event_obj.type, "status": event_obj.status, "date": event_obj.date, "time": event_obj.time, "location": event_obj.location, "stars": event_obj.stars, "description": event_obj.description, "interestedCount": len(interested_ids), "rsvpCount": len(rsvp_ids), "attendanceCount": len(attendance_ids), "feedbackCount": len(feedback_user_ids), "isInterested": current_user_id in interested_ids if current_user_id is not None else False, "isRsvped": current_user_id in rsvp_ids if current_user_id is not None else False, "isAttended": current_user_id in attendance_ids if current_user_id is not None else False, "hasSubmittedFeedback": current_user_id in feedback_user_ids if current_user_id is not None else False, "checkinActive": bool(event_obj.checkin_active), "checkinToken": event_obj.checkin_token or ""}
 
 
 def build_live_checkin_event(event_obj, include_code=False):
@@ -516,9 +551,9 @@ def build_admin_data():
     events = db.scalars(select(Event).order_by(Event.created_at.desc(), Event.id.desc())).all()
     subscriptions = db.scalars(select(PushSubscription).order_by(PushSubscription.created_at.desc())).all()
     return {
-        "stats": {"users": len(users), "members": sum(1 for user in users if user.role == "member"), "officers": sum(1 for user in users if user.role == "officer"), "events": len(events), "liveCheckins": sum(1 for event_obj in events if event_obj.checkin_active), "subscriptions": len(subscriptions), "rsvps": sum(len(event_obj.rsvps) for event_obj in events), "interests": sum(len(event_obj.interests) for event_obj in events), "attendance": sum(len(event_obj.attendance_records) for event_obj in events)},
+        "stats": {"users": len(users), "members": sum(1 for user in users if user.role == "member"), "officers": sum(1 for user in users if user.role == "officer"), "events": len(events), "liveCheckins": sum(1 for event_obj in events if event_obj.checkin_active), "subscriptions": len(subscriptions), "rsvps": sum(len(event_obj.rsvps) for event_obj in events), "interests": sum(len(event_obj.interests) for event_obj in events), "attendance": sum(len(event_obj.attendance_records) for event_obj in events), "feedback": sum(len(event_obj.feedback_entries) for event_obj in events)},
         "users": [{"id": user.id, "name": user.name, "email": user.email, "major": user.major, "year": user.year, "role": user.role, "position": user.position or "", "stars": user.stars, "eligibleForLeaderboard": bool(user.eligible_for_leaderboard), "createdAt": user.created_at.isoformat(), "profileImage": user.profile_image or "", "emailVerified": bool(user.email_verified)} for user in users],
-        "events": [{"id": event_obj.id, "title": event_obj.title, "type": event_obj.type, "status": event_obj.status, "date": event_obj.date, "time": event_obj.time, "location": event_obj.location, "stars": event_obj.stars, "checkinActive": bool(event_obj.checkin_active), "attendanceCode": event_obj.attendance_code or "", "interestedCount": len(event_obj.interests), "rsvpCount": len(event_obj.rsvps), "attendanceCount": len(event_obj.attendance_records), "attendees": [{"id": attendance.user.id, "name": attendance.user.name, "email": attendance.user.email, "major": attendance.user.major, "year": attendance.user.year, "checkedInAt": attendance.created_at.isoformat()} for attendance in sorted(event_obj.attendance_records, key=lambda record: record.created_at)]} for event_obj in events],
+        "events": [{"id": event_obj.id, "title": event_obj.title, "type": event_obj.type, "status": event_obj.status, "date": event_obj.date, "time": event_obj.time, "location": event_obj.location, "stars": event_obj.stars, "checkinActive": bool(event_obj.checkin_active), "attendanceCode": event_obj.attendance_code or "", "interestedCount": len(event_obj.interests), "rsvpCount": len(event_obj.rsvps), "attendanceCount": len(event_obj.attendance_records), "feedbackCount": len(event_obj.feedback_entries), "attendees": [{"id": attendance.user.id, "name": attendance.user.name, "email": attendance.user.email, "major": attendance.user.major, "year": attendance.user.year, "checkedInAt": attendance.created_at.isoformat()} for attendance in sorted(event_obj.attendance_records, key=lambda record: record.created_at)], "feedback": [{"userId": feedback.user.id, "name": feedback.user.name, "email": feedback.user.email, "rating": feedback.rating, "comment": feedback.comment, "submittedAt": feedback.updated_at.isoformat()} for feedback in sorted(event_obj.feedback_entries, key=lambda record: record.updated_at, reverse=True)]} for event_obj in events],
         "subscriptions": [{"id": subscription.id, "userId": subscription.user_id, "endpoint": subscription.endpoint, "createdAt": subscription.created_at.isoformat()} for subscription in subscriptions],
     }
 
@@ -834,6 +869,43 @@ def claim_live_checkin(user):
     data["checkinMessage"] = f"Attendance confirmed for {event_obj.title}. You earned {event_obj.stars} stars."
     return jsonify(data)
 
+
+@app.post("/api/events/<int:event_id>/feedback")
+@login_required
+def submit_event_feedback(user, event_id):
+    payload = request.get_json(silent=True) or {}
+    try:
+        rating = int(payload.get("rating", 0))
+    except (TypeError, ValueError):
+        rating = 0
+    comment = str(payload.get("comment", "")).strip()
+    if rating < 1 or rating > 5:
+        return jsonify({"error": "Choose a feedback rating from 1 to 5."}), 400
+    if len(comment) > 1000:
+        return jsonify({"error": "Please keep feedback under 1000 characters."}), 400
+
+    db = get_db()
+    event_obj = db.get(Event, event_id)
+    if event_obj is None:
+        return jsonify({"error": "Event not found."}), 404
+    if event_obj.status != "completed":
+        return jsonify({"error": "Feedback opens after the event is completed."}), 400
+    if db.get(EventAttendance, {"user_id": user.id, "event_id": event_id}) is None:
+        return jsonify({"error": "Only checked-in attendees can submit feedback for this event."}), 403
+
+    now = utc_now()
+    feedback = db.get(EventFeedback, {"user_id": user.id, "event_id": event_id})
+    if feedback:
+        feedback.rating = rating
+        feedback.comment = comment
+        feedback.updated_at = now
+    else:
+        db.add(EventFeedback(user_id=user.id, event_id=event_id, rating=rating, comment=comment, created_at=now, updated_at=now))
+    db.commit()
+    data = get_dashboard_payload(user)
+    data["feedbackMessage"] = f"Thanks for sharing feedback on {event_obj.title}."
+    return jsonify(data)
+
 @app.post("/api/notifications/subscribe")
 @login_required
 def save_push_subscription(user):
@@ -960,7 +1032,13 @@ def complete_event(_, event_id):
     event_obj.checkin_active = False
     event_obj.attendance_code = None
     db.commit()
-    return jsonify(get_dashboard_payload(get_current_user(db)))
+    notification_summary = {"sent": 0, "failed": 0, "errors": []}
+    if push_notifications_configured():
+        delivered, failed, errors = send_feedback_push_to_attendees(db, event_obj)
+        notification_summary = {"sent": delivered, "failed": failed, "errors": errors}
+    response = get_dashboard_payload(get_current_user(db))
+    response["feedbackNotificationSummary"] = notification_summary
+    return jsonify(response)
 
 
 @app.post("/api/admin/promote")
